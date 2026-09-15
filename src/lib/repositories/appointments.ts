@@ -107,6 +107,44 @@ export const appointmentRepo = {
     if (error) throw error;
     return data;
   },
+
+  /**
+   * All appointments (any status) for a barber on a given date — used by the
+   * agenda view. RLS on `appointments` does not scope rows by barber (any
+   * authenticated user can read/write any row), so the `barber_id` filter
+   * here is what actually enforces the boundary.
+   */
+  async getForAgenda(barberId: string, date: string) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("*, services(name, duration_minutes, price), clients(name, phone)")
+      .eq("barber_id", barberId)
+      .eq("date", date)
+      .order("start_time");
+
+    if (error) throw error;
+    return data;
+  },
+
+  /**
+   * Same as `updateStatus`, but additionally scoped to `barberId` — since
+   * RLS lets any authenticated user update any appointment, this filter is
+   * what prevents a barber from mutating another barber's appointment.
+   */
+  async updateStatusForBarber(id: string, barberId: string, status: string) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("appointments")
+      .update({ status })
+      .eq("id", id)
+      .eq("barber_id", barberId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
 };
 
 function timeToMinutes(time: string): number {

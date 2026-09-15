@@ -1,3 +1,5 @@
+export { cn } from "cn";
+
 export function formatPrice(price: number): string {
   return `$${price.toFixed(0)}`;
 }
