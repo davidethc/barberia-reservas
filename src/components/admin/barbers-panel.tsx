@@ -187,6 +187,7 @@ function BarberFormDialog({
             photo_url: payload.photoUrl,
             pin: payload.pin,
             commission_pct: payload.commissionPct,
+            role: barber?.role ?? "barber",
             is_active: barber?.is_active ?? true,
             created_at: barber?.created_at ?? null,
           },

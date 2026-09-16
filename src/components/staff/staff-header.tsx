@@ -8,7 +8,7 @@ import { signOut } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export function StaffHeader({ title }: { title: string }) {
+export function StaffHeader({ title, isAdmin = false }: { title: string; isAdmin?: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -42,17 +42,19 @@ export function StaffHeader({ title }: { title: string }) {
             >
               Agenda
             </Link>
-            <Link
-              href="/admin"
-              className={cn(
-                "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
-                pathname?.startsWith("/admin")
-                  ? "bg-muted text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Admin
-            </Link>
+            {isAdmin && (
+              <Link
+                href="/admin"
+                className={cn(
+                  "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
+                  pathname?.startsWith("/admin")
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Admin
+              </Link>
+            )}
           </nav>
         </div>
         <Button variant="ghost" size="sm" onClick={handleSignOut} disabled={isPending}>

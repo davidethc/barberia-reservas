@@ -1,10 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { getRoleByUserId } from "@/lib/repositories/barbers";
+import type { Database } from "@/types/database";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
-  const supabase = createServerClient(
+  const supabase = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -29,13 +31,20 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  const isAdminRoute = request.nextUrl.pathname.startsWith("/admin");
   const isProtectedRoute =
-    request.nextUrl.pathname.startsWith("/agenda") ||
-    request.nextUrl.pathname.startsWith("/admin");
+    request.nextUrl.pathname.startsWith("/agenda") || isAdminRoute;
 
   if (!user && isProtectedRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
+
+  // Scoped to /admin so the role lookup doesn't run on every request.
+  if (user && isAdminRoute && (await getRoleByUserId(supabase, user.id)) !== "admin") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/agenda";
     return NextResponse.redirect(url);
   }
 

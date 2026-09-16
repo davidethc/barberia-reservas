@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { isCurrentUserAdmin } from "@/lib/staff";
 import { serviceRepo } from "@/lib/repositories/services";
 import { barberRepo } from "@/lib/repositories/barbers";
 import { businessHoursRepo } from "@/lib/repositories/business-hours";
@@ -17,20 +19,12 @@ import {
   CommissionsReportRangeSchema,
 } from "@/lib/schemas/admin";
 
-// No role/is_admin column exists yet — any authenticated user is treated as
-// staff and can reach every admin action. See report TODO: a real
-// permission system is needed once more than one barber has an account.
-async function requireStaff(): Promise<boolean> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return !!user;
-}
-
 // ---------- Reads (used by the admin page Server Component) ----------
 
 export async function getAdminData() {
+  // Also the gate for the /admin page itself: the page renders whatever this returns.
+  if (!(await isCurrentUserAdmin())) redirect("/agenda");
+
   const [services, barbers, businessHours] = await Promise.all([
     serviceRepo.getAll(),
     barberRepo.getAll(),
@@ -43,7 +37,7 @@ export async function getAdminData() {
 // ---------- Services ----------
 
 export async function createService(input: unknown): Promise<ActionResult<{ id: string }>> {
-  if (!(await requireStaff())) return { success: false, error: "No autorizado" };
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
 
   const parsed = CreateServiceSchema.safeParse(input);
   if (!parsed.success) return { success: false, error: "Datos inválidos" };
@@ -58,7 +52,7 @@ export async function createService(input: unknown): Promise<ActionResult<{ id: 
 }
 
 export async function updateService(input: unknown): Promise<ActionResult<{ id: string }>> {
-  if (!(await requireStaff())) return { success: false, error: "No autorizado" };
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
 
   const parsed = UpdateServiceSchema.safeParse(input);
   if (!parsed.success) return { success: false, error: "Datos inválidos" };
@@ -74,7 +68,7 @@ export async function updateService(input: unknown): Promise<ActionResult<{ id: 
 }
 
 export async function toggleServiceActive(input: unknown): Promise<ActionResult<{ id: string }>> {
-  if (!(await requireStaff())) return { success: false, error: "No autorizado" };
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
 
   const parsed = ToggleActiveSchema.safeParse(input);
   if (!parsed.success) return { success: false, error: "Datos inválidos" };
@@ -89,7 +83,7 @@ export async function toggleServiceActive(input: unknown): Promise<ActionResult<
 }
 
 export async function reorderServices(input: unknown): Promise<ActionResult<null>> {
-  if (!(await requireStaff())) return { success: false, error: "No autorizado" };
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
 
   const parsed = ReorderServicesSchema.safeParse(input);
   if (!parsed.success) return { success: false, error: "Datos inválidos" };
@@ -106,7 +100,7 @@ export async function reorderServices(input: unknown): Promise<ActionResult<null
 // ---------- Barbers ----------
 
 export async function createBarber(input: unknown): Promise<ActionResult<{ id: string }>> {
-  if (!(await requireStaff())) return { success: false, error: "No autorizado" };
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
 
   const parsed = CreateBarberSchema.safeParse(input);
   if (!parsed.success) return { success: false, error: "Datos inválidos" };
@@ -126,7 +120,7 @@ export async function createBarber(input: unknown): Promise<ActionResult<{ id: s
 }
 
 export async function updateBarber(input: unknown): Promise<ActionResult<{ id: string }>> {
-  if (!(await requireStaff())) return { success: false, error: "No autorizado" };
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
 
   const parsed = UpdateBarberSchema.safeParse(input);
   if (!parsed.success) return { success: false, error: "Datos inválidos" };
@@ -142,7 +136,7 @@ export async function updateBarber(input: unknown): Promise<ActionResult<{ id: s
 }
 
 export async function toggleBarberActive(input: unknown): Promise<ActionResult<{ id: string }>> {
-  if (!(await requireStaff())) return { success: false, error: "No autorizado" };
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
 
   const parsed = ToggleActiveSchema.safeParse(input);
   if (!parsed.success) return { success: false, error: "Datos inválidos" };
@@ -159,7 +153,7 @@ export async function toggleBarberActive(input: unknown): Promise<ActionResult<{
 // ---------- Business hours ----------
 
 export async function updateBusinessHours(input: unknown): Promise<ActionResult<null>> {
-  if (!(await requireStaff())) return { success: false, error: "No autorizado" };
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
 
   const parsed = BusinessHoursInputSchema.safeParse(input);
   if (!parsed.success) return { success: false, error: "Datos inválidos" };
@@ -187,7 +181,7 @@ export type CommissionRow = {
 export async function getCommissionsReport(
   input: unknown
 ): Promise<ActionResult<CommissionRow[]>> {
-  if (!(await requireStaff())) return { success: false, error: "No autorizado" };
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
 
   const parsed = CommissionsReportRangeSchema.safeParse(input);
   if (!parsed.success) return { success: false, error: "Rango de fechas inválido" };

@@ -1,5 +1,32 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { BUSINESS_ID } from "@/lib/constants";
+import type { Database } from "@/types/database";
+
+export type BarberRole = "admin" | "barber";
+
+export function isAdminRole(role: string | null | undefined): boolean {
+  return role === "admin";
+}
+
+/**
+ * Takes the Supabase client as an argument because the proxy builds its own client and
+ * cannot use the cookies()-based one the repository methods create.
+ */
+export async function getRoleByUserId(
+  supabase: SupabaseClient<Database>,
+  userId: string
+): Promise<BarberRole | null> {
+  const { data, error } = await supabase
+    .from("barbers")
+    .select("role")
+    .eq("business_id", BUSINESS_ID)
+    .eq("user_id", userId)
+    .single();
+
+  if (error || !data) return null;
+  return isAdminRole(data.role) ? "admin" : "barber";
+}
 
 export const barberRepo = {
   async getActive() {

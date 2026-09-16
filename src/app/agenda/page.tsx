@@ -1,6 +1,7 @@
 import { getAppointmentsForDate } from "@/app/actions/agenda";
 import { AgendaView } from "@/components/agenda/agenda-view";
 import { StaffHeader } from "@/components/staff/staff-header";
+import { isCurrentUserAdmin } from "@/lib/staff";
 
 function todayStr(): string {
   return new Date().toISOString().split("T")[0]!;
@@ -8,11 +9,14 @@ function todayStr(): string {
 
 export default async function AgendaPage() {
   const date = todayStr();
-  const result = await getAppointmentsForDate(date);
+  const [result, isAdmin] = await Promise.all([
+    getAppointmentsForDate(date),
+    isCurrentUserAdmin(),
+  ]);
 
   return (
     <div className="min-h-screen bg-background">
-      <StaffHeader title="Agenda" />
+      <StaffHeader title="Agenda" isAdmin={isAdmin} />
       {result.success ? (
         <AgendaView initialDate={date} initialAppointments={result.data} />
       ) : (

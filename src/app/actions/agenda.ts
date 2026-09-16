@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { barberRepo } from "@/lib/repositories/barbers";
+import { getCurrentBarber } from "@/lib/staff";
 import { appointmentRepo } from "@/lib/repositories/appointments";
 import { paymentRepo } from "@/lib/repositories/payments";
 import { CompleteAppointmentSchema, CancelAppointmentSchema } from "@/lib/schemas/booking";
@@ -19,15 +19,6 @@ export type AgendaAppointment = {
   services: { name: string; duration_minutes: number; price: number } | null;
   clients: { name: string; phone: string } | null;
 };
-
-async function getCurrentBarber() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
-  return barberRepo.getByUserId(user.id);
-}
 
 export async function getAppointmentsForDate(
   date: string

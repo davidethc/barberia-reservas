@@ -7,7 +7,7 @@ export default async function AdminPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <StaffHeader title="Admin" />
+      <StaffHeader title="Admin" isAdmin />
       <AdminTabs services={services} barbers={barbers} businessHours={businessHours} />
     </div>
   );
