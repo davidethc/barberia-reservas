@@ -7,7 +7,13 @@ import { isCurrentUserAdmin } from "@/lib/staff";
 import { serviceRepo } from "@/lib/repositories/services";
 import { barberRepo } from "@/lib/repositories/barbers";
 import { businessHoursRepo } from "@/lib/repositories/business-hours";
+import {
+  clientRepo,
+  type ClientListItem,
+  type ClientStats,
+} from "@/lib/repositories/clients";
 import type { ActionResult } from "@/lib/appointment-states";
+import { ClientSearchSchema, UpdateClientNotesSchema } from "@/lib/schemas/clients";
 import {
   CreateServiceSchema,
   UpdateServiceSchema,
@@ -23,17 +29,33 @@ import {
 
 // ---------- Reads (used by the admin page Server Component) ----------
 
+export type ClientsSnapshot = {
+  items: ClientListItem[];
+  hasMore: boolean;
+  stats: ClientStats;
+};
+
 export async function getAdminData() {
   // Also the gate for the /admin page itself: the page renders whatever this returns.
   if (!(await isCurrentUserAdmin())) redirect("/agenda");
 
-  const [services, barbers, businessHours] = await Promise.all([
+  const [services, barbers, businessHours, clients] = await Promise.all([
     serviceRepo.getAll(),
     barberRepo.getAll(),
     businessHoursRepo.getAll(),
+    // A failing clients query shows an error inside its own tab instead of blanking /admin.
+    loadClientsSnapshot().catch(() => null),
   ]);
 
-  return { services, barbers, businessHours };
+  return { services, barbers, businessHours, clients };
+}
+
+async function loadClientsSnapshot(term = "", sort: "visits" | "recent" | "name" = "visits") {
+  const [page, stats] = await Promise.all([
+    clientRepo.search({ term, sort }),
+    clientRepo.getStats(),
+  ]);
+  return { ...page, stats };
 }
 
 // ---------- Services ----------
@@ -165,7 +187,7 @@ const LINK_ERROR_MESSAGES: Record<string, string> = {
   BARBER_LINK_ALREADY_LINKED: "Esa cuenta ya está vinculada a otro barbero",
   BARBER_LINK_BARBER_NOT_FOUND: "El barbero ya no existe",
   BARBER_UNLINK_NOT_ADMIN: "No autorizado",
-  BARBER_UNLINK_SELF: "No podés desvincular tu propia cuenta",
+  BARBER_UNLINK_SELF: "No puedes desvincular tu propia cuenta",
   BARBER_UNLINK_BARBER_NOT_FOUND: "El barbero ya no existe",
 };
 
@@ -210,6 +232,53 @@ export async function unlinkBarberAccount(input: unknown): Promise<ActionResult<
     return { success: true, data: { id: parsed.data.barberId } };
   } catch (error) {
     return { success: false, error: linkErrorMessage(error, "No se pudo desvincular la cuenta") };
+  }
+}
+
+// ---------- Clients ----------
+
+export async function searchClients(
+  input: unknown
+): Promise<ActionResult<{ items: ClientListItem[]; hasMore: boolean; offset: number }>> {
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
+
+  const parsed = ClientSearchSchema.safeParse(input);
+  if (!parsed.success) return { success: false, error: "Búsqueda inválida" };
+
+  try {
+    const page = await clientRepo.search(parsed.data);
+    return { success: true, data: { ...page, offset: parsed.data.offset } };
+  } catch {
+    return { success: false, error: "No se pudieron cargar los clientes" };
+  }
+}
+
+export async function getClientStats(): Promise<ActionResult<ClientStats>> {
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
+
+  try {
+    return { success: true, data: await clientRepo.getStats() };
+  } catch {
+    return { success: false, error: "No se pudieron cargar los datos de clientes" };
+  }
+}
+
+export async function updateClientNotes(
+  input: unknown
+): Promise<ActionResult<ClientListItem>> {
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
+
+  const parsed = UpdateClientNotesSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  try {
+    const client = await clientRepo.updateNotes(parsed.data.id, parsed.data.notes);
+    revalidatePath("/admin");
+    return { success: true, data: client };
+  } catch {
+    return { success: false, error: "No se pudo guardar la nota" };
   }
 }
 

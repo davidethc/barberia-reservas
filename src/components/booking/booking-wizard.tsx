@@ -1,47 +1,46 @@
 "use client";
 
-import { useState, useTransition, useEffect } from "react";
+import { useState, useTransition, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { createAppointment, getAvailableSlots } from "@/app/actions/booking";
-import { formatPrice, formatDate, formatTime, getNextDays, buildWhatsAppLink, cn } from "@/lib/utils";
+import { formatPrice, formatDate, formatTime, cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-
-type Service = {
-  id: string;
-  name: string;
-  description: string | null;
-  duration_minutes: number;
-  price: number;
-};
-
-type Barber = {
-  id: string;
-  name: string;
-  photo_url: string | null;
-};
-
-type Business = {
-  name: string;
-  phone: string | null;
-  address: string | null;
-};
+import { ConfirmationView } from "./confirmation-view";
+import { StepProgress } from "./step-progress";
+import { formatDayNumber, formatWeekdayShort, getDayOfWeek } from "./date-helpers";
+import { isConfirmedBooking, type Barber, type Business, type ConfirmedBooking, type Service } from "./types";
 
 type Props = {
   services: Service[];
   barbers: Barber[];
   business: Business;
+  /** Weekdays (0 = Sunday) the shop opens, from `business_hours`. */
+  openDays: number[];
+  /** The next days offered, resolved on the shop's clock by the server. */
+  dates: string[];
 };
 
-type Step = "service" | "barber" | "schedule" | "details" | "confirmed";
+type Step = "service" | "barber" | "schedule" | "details";
 
-export function BookingWizard({ services, barbers, business }: Props) {
+const STEPS: { id: Step; label: string }[] = [
+  { id: "service", label: "Servicio" },
+  { id: "barber", label: "Barbero" },
+  { id: "schedule", label: "Horario" },
+  { id: "details", label: "Tus datos" },
+];
+
+const BOOKING_STORAGE_KEY = "eb_booking";
+
+export function BookingWizard({ services, barbers, business, openDays, dates }: Props) {
   const [step, setStep] = useState<Step>("service");
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [selectedBarber, setSelectedBarber] = useState<Barber | null>(null);
-  const [selectedDate, setSelectedDate] = useState<string>(getNextDays(1)[0]!);
+  const [selectedDate, setSelectedDate] = useState<string>(
+    () => firstOpenDate(dates, openDays)
+  );
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
   const [slots, setSlots] = useState<string[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -49,9 +48,13 @@ export function BookingWizard({ services, barbers, business }: Props) {
   const [slotsRetry, setSlotsRetry] = useState(0);
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
+  const [confirmed, setConfirmed] = useState<ConfirmedBooking | null>(null);
+  const [restored, setRestored] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  const dates = getNextDays(7);
+  const openDaySet = useMemo(() => new Set(openDays), [openDays]);
+  const selectedDateIsOpen = openDaySet.has(getDayOfWeek(selectedDate));
+  const stepIndex = STEPS.findIndex((s) => s.id === step);
 
   // localStorage isn't available during SSR, so this can't be a lazy useState
   // initializer — it has to run post-mount in an effect.
@@ -61,16 +64,44 @@ export function BookingWizard({ services, barbers, business }: Props) {
     if (saved) setClientPhone(saved);
     const savedName = localStorage.getItem("eb_client_name");
     if (savedName) setClientName(savedName);
-  }, []);
+
+    // A refresh used to wipe the confirmation and leave nothing behind; the
+    // turn is kept here until the day it happens is over.
+    try {
+      const raw = localStorage.getItem(BOOKING_STORAGE_KEY);
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (!isConfirmedBooking(parsed)) {
+        localStorage.removeItem(BOOKING_STORAGE_KEY);
+        return;
+      }
+      if (dates.length > 0 && parsed.date < dates[0]!) {
+        localStorage.removeItem(BOOKING_STORAGE_KEY);
+        return;
+      }
+      setConfirmed(parsed);
+      setRestored(true);
+    } catch {
+      // Corrupt or unavailable storage must never block a new booking.
+    }
+  }, [dates]);
 
   // Standard fetch-on-dependency-change pattern; the loading flag has to be
   // set here since it depends on the async call this same effect triggers.
   useEffect(() => {
     if (!selectedBarber || !selectedService) return;
+    // A closed day has nothing to ask the server for.
+    if (!openDaySet.has(getDayOfWeek(selectedDate))) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSlots([]);
+      setLoadingSlots(false);
+      setSlotsFailed(false);
+      setSelectedTime(null);
+      return;
+    }
     // Tapping through dates fires overlapping requests, and a slow earlier one
     // must not overwrite the slots of the date now selected.
     let stale = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadingSlots(true);
     setSlotsFailed(false);
     setSelectedTime(null);
@@ -93,7 +124,7 @@ export function BookingWizard({ services, barbers, business }: Props) {
     return () => {
       stale = true;
     };
-  }, [selectedBarber, selectedDate, selectedService, slotsRetry]);
+  }, [selectedBarber, selectedDate, selectedService, slotsRetry, openDaySet]);
 
   function handleSelectService(service: Service) {
     setSelectedService(service);
@@ -110,6 +141,20 @@ export function BookingWizard({ services, barbers, business }: Props) {
     setStep("details");
   }
 
+  function handleReset() {
+    try {
+      localStorage.removeItem(BOOKING_STORAGE_KEY);
+    } catch {}
+    setConfirmed(null);
+    setRestored(false);
+    setSelectedService(null);
+    setSelectedBarber(null);
+    setSelectedDate(firstOpenDate(dates, openDays));
+    setSelectedTime(null);
+    setSlots([]);
+    setStep("service");
+  }
+
   function handleSubmit() {
     if (isPending || !selectedService || !selectedBarber || !selectedTime) return;
 
@@ -124,25 +169,35 @@ export function BookingWizard({ services, barbers, business }: Props) {
       });
 
       if (result.success) {
+        const booking: ConfirmedBooking = {
+          code: result.data.appointmentId.replace(/-/g, "").slice(0, 6).toUpperCase(),
+          serviceName: selectedService.name,
+          price: selectedService.price,
+          durationMinutes: selectedService.duration_minutes,
+          barberName: selectedBarber.name,
+          date: selectedDate,
+          time: selectedTime,
+        };
         try {
           localStorage.setItem("eb_client_phone", clientPhone.trim());
           localStorage.setItem("eb_client_name", clientName.trim());
+          localStorage.setItem(BOOKING_STORAGE_KEY, JSON.stringify(booking));
         } catch {}
-        setStep("confirmed");
+        setRestored(false);
+        setConfirmed(booking);
       } else {
         toast.error(result.error);
       }
     });
   }
 
-  if (step === "confirmed" && selectedService && selectedBarber && selectedTime) {
+  if (confirmed) {
     return (
       <ConfirmationView
-        service={selectedService}
-        barber={selectedBarber}
-        date={selectedDate}
-        time={selectedTime}
+        booking={confirmed}
         business={business}
+        restored={restored}
+        onReset={handleReset}
       />
     );
   }
@@ -150,14 +205,23 @@ export function BookingWizard({ services, barbers, business }: Props) {
   return (
     <div className="min-h-screen bg-background">
       <header className="px-7 pt-11 pb-7">
-        <div className="text-xs font-semibold tracking-widest uppercase text-muted-foreground">
-          Reservar turno
+        <div className="flex items-baseline justify-between gap-4">
+          <div className="text-xs font-semibold tracking-widest uppercase text-muted-foreground">
+            Reservar turno
+          </div>
+          <div className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
+            Paso {stepIndex + 1} de {STEPS.length}
+          </div>
         </div>
         <h1 className="text-4xl font-bold mt-5 leading-none text-foreground">
           {business.name || "Exclusive"}<br />
           {business.name ? "" : "Barber Shop"}
         </h1>
-        <div className="w-9 h-0.5 mt-4 bg-foreground" />
+        <StepProgress
+          current={stepIndex + 1}
+          total={STEPS.length}
+          label={STEPS[stepIndex]!.label}
+        />
       </header>
 
       <div key={step} className="animate-in fade-in slide-in-from-right-2 duration-300">
@@ -176,7 +240,9 @@ export function BookingWizard({ services, barbers, business }: Props) {
         {step === "schedule" && (
           <ScheduleStep
             dates={dates}
+            openDaySet={openDaySet}
             selectedDate={selectedDate}
+            selectedDateIsOpen={selectedDateIsOpen}
             onSelectDate={setSelectedDate}
             slots={slots}
             loading={loadingSlots}
@@ -207,6 +273,12 @@ export function BookingWizard({ services, barbers, business }: Props) {
   );
 }
 
+/** Landing on a day the shop is closed costs the client a tap to find out. */
+function firstOpenDate(dates: string[], openDays: number[]): string {
+  const open = new Set(openDays);
+  return dates.find((d) => open.has(getDayOfWeek(d))) ?? dates[0]!;
+}
+
 function ServiceStep({
   services,
   onSelect,
@@ -216,12 +288,15 @@ function ServiceStep({
 }) {
   return (
     <div className="px-7 pb-9">
+      <div className="text-xs font-semibold tracking-widest uppercase mb-1 text-muted-foreground">
+        Servicio
+      </div>
       {services.map((service, i) => (
         <button
           key={service.id}
           onClick={() => onSelect(service)}
           className={cn(
-            "w-full text-left flex justify-between items-baseline py-5.5 min-h-11",
+            "w-full text-left flex justify-between items-baseline gap-4 py-5.5 min-h-11",
             "transition-transform active:scale-[0.98]",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm",
             i < services.length - 1 && "border-b border-border"
@@ -273,7 +348,7 @@ function BarberStep({
             className="flex-1 rounded-2xl p-5 text-center border border-border transition-transform active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center bg-border">
-              <svg width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <svg width="24" height="24" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                 <circle cx="12" cy="8" r="4" className="stroke-foreground" strokeWidth="1.5" />
                 <path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6" className="stroke-foreground" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
@@ -288,7 +363,9 @@ function BarberStep({
 
 function ScheduleStep({
   dates,
+  openDaySet,
   selectedDate,
+  selectedDateIsOpen,
   onSelectDate,
   slots,
   loading,
@@ -298,7 +375,9 @@ function ScheduleStep({
   onBack,
 }: {
   dates: string[];
+  openDaySet: Set<number>;
   selectedDate: string;
+  selectedDateIsOpen: boolean;
   onSelectDate: (d: string) => void;
   slots: string[];
   loading: boolean;
@@ -320,25 +399,46 @@ function ScheduleStep({
         Horario
       </div>
       <div className="flex gap-2 mb-3.5 overflow-x-auto pb-1">
-        {dates.map((date, i) => (
-          <button
-            key={date}
-            onClick={() => onSelectDate(date)}
-            className={cn(
-              "shrink-0 text-sm font-medium px-5 py-2 rounded-lg min-h-11 flex items-center",
-              "transition-transform active:scale-[0.98]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-              date === selectedDate
-                ? "bg-foreground text-background font-semibold"
-                : "border border-border text-muted-foreground"
-            )}
-          >
-            {i === 0 ? "Hoy" : formatDate(date)}
-          </button>
-        ))}
+        {dates.map((date, i) => {
+          const isOpen = openDaySet.has(getDayOfWeek(date));
+          const isSelected = date === selectedDate;
+          return (
+            <button
+              key={date}
+              onClick={() => isOpen && onSelectDate(date)}
+              disabled={!isOpen}
+              aria-label={`${i === 0 ? "Hoy, " : ""}${formatDate(date)}${isOpen ? "" : ", cerrado"}`}
+              className={cn(
+                "shrink-0 w-[4.5rem] min-h-14 px-2 py-2 rounded-lg flex flex-col items-center justify-center gap-0.5",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                isOpen && "transition-transform active:scale-[0.98]",
+                !isOpen
+                  ? "border border-dashed border-border text-muted-foreground cursor-not-allowed"
+                  : isSelected
+                    ? "bg-foreground text-background"
+                    : "border border-border text-muted-foreground"
+              )}
+            >
+              <span className={cn("text-sm", isSelected ? "font-semibold" : "font-medium")}>
+                {i === 0 ? "Hoy" : formatWeekdayShort(date)}
+              </span>
+              {isOpen ? (
+                <span className="text-xs tabular-nums opacity-80">{formatDayNumber(date)}</span>
+              ) : (
+                <span className="text-[0.625rem] font-medium uppercase tracking-wider">
+                  Cerrado
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {loading ? (
+      {!selectedDateIsOpen ? (
+        <div className="text-sm py-8 text-center text-muted-foreground">
+          La barbería no abre este día. Elige otra fecha.
+        </div>
+      ) : loading ? (
         <div className="grid grid-cols-4 gap-2">
           {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={i} className="rounded-lg h-11 w-full" />
@@ -408,7 +508,7 @@ function DetailsStep({
   const nameIsValid = nameValue.length >= 2;
   const phoneIsValid = /^0\d{9}$/.test(phoneValue);
   const isValid = nameIsValid && phoneIsValid;
-  const nameError = nameValue.length > 0 && !nameIsValid ? "Ingresá tu nombre completo" : null;
+  const nameError = nameValue.length > 0 && !nameIsValid ? "Ingresa tu nombre completo" : null;
   const phoneError =
     phoneValue.length > 0 && !phoneIsValid ? "El teléfono va con 10 dígitos: 09XXXXXXXX" : null;
 
@@ -489,69 +589,6 @@ function DetailsStep({
           {isPending ? "Reservando..." : "Confirmar reserva"}
         </span>
       </Button>
-    </div>
-  );
-}
-
-function ConfirmationView({
-  service,
-  barber,
-  date,
-  time,
-  business,
-}: {
-  service: Service;
-  barber: Barber;
-  date: string;
-  time: string;
-  business: Business;
-}) {
-  const whatsappLink = buildWhatsAppLink({
-    businessPhone: (business.phone ?? "").replace(/\D/g, ""),
-    serviceName: service.name,
-    barberName: barber.name,
-    date,
-    time,
-  });
-
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-7 bg-background animate-in fade-in zoom-in-95 duration-300">
-      <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6 bg-accent">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-          <path d="M5 12l5 5L19 7" className="stroke-accent-foreground" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </div>
-
-      <h2 className="text-2xl font-bold mb-2 text-foreground">
-        Reserva confirmada
-      </h2>
-
-      <div className="w-full rounded-2xl p-6 mt-4 mb-8 bg-surface">
-        <div className="text-lg font-semibold text-foreground">{service.name}</div>
-        <div className="text-sm mt-2 text-muted-foreground">
-          <div>💈 {barber.name}</div>
-          <div>📅 {formatDate(date)}</div>
-          <div>🕐 {formatTime(time)}</div>
-        </div>
-        <div className="text-xl font-bold mt-3 text-foreground">{formatPrice(service.price)}</div>
-      </div>
-
-      <a
-        href={whatsappLink}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="w-full min-h-11 rounded-2xl py-4 text-center block font-semibold text-white transition-transform active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-        style={{ background: "#25D366" }}
-      >
-        Compartir por WhatsApp
-      </a>
-
-      <button
-        onClick={() => window.location.reload()}
-        className="mt-4 flex min-h-11 items-center justify-center px-2 text-sm font-medium text-muted-foreground transition-transform active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
-      >
-        Nueva reserva
-      </button>
     </div>
   );
 }

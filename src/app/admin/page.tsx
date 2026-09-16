@@ -3,12 +3,17 @@ import { AdminTabs } from "@/components/admin/admin-tabs";
 import { StaffHeader } from "@/components/staff/staff-header";
 
 export default async function AdminPage() {
-  const { services, barbers, businessHours } = await getAdminData();
+  const { services, barbers, businessHours, clients } = await getAdminData();
 
   return (
     <div className="min-h-screen bg-background">
       <StaffHeader title="Admin" isAdmin />
-      <AdminTabs services={services} barbers={barbers} businessHours={businessHours} />
+      <AdminTabs
+        services={services}
+        barbers={barbers}
+        businessHours={businessHours}
+        clients={clients}
+      />
     </div>
   );
 }

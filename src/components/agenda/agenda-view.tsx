@@ -212,7 +212,7 @@ export function AgendaView({
       <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
           {blockCount === 0
-            ? "No tenés bloqueos este día"
+            ? "No tienes bloqueos este día"
             : blockCount === 1
               ? "1 bloqueo este día"
               : `${blockCount} bloqueos este día`}

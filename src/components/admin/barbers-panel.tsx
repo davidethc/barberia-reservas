@@ -22,38 +22,63 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { Plus, Pencil, Link2, Link2Off, TriangleAlert } from "lucide-react";
+import { ConfirmDialog } from "@/components/staff/confirm-dialog";
+import { Link2, Link2Off, Pencil, Plus, TriangleAlert } from "lucide-react";
 import type { Database } from "@/types/database";
 
 type Barber = Database["public"]["Tables"]["barbers"]["Row"];
 
-export function BarbersPanel({ initialBarbers }: { initialBarbers: Barber[] }) {
-  const [barbers, setBarbers] = useState(initialBarbers);
+/** An active barber with no login cannot open /agenda at all — that is the state to surface. */
+export function isUnlinked(barber: Barber): boolean {
+  return barber.is_active !== false && !barber.user_id;
+}
+
+export function BarbersPanel({
+  barbers,
+  onBarbersChange,
+}: {
+  barbers: Barber[];
+  onBarbersChange: (updater: (prev: Barber[]) => Barber[]) => void;
+}) {
   const [editing, setEditing] = useState<Barber | null>(null);
   const [creating, setCreating] = useState(false);
   const [linking, setLinking] = useState<Barber | null>(null);
+  const [deactivating, setDeactivating] = useState<Barber | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const unlinked = barbers.filter((b) => b.is_active !== false && !b.user_id);
+  const unlinked = barbers.filter(isUnlinked);
 
-  function handleToggleActive(barber: Barber) {
-    setBarbers((prev) =>
-      prev.map((b) => (b.id === barber.id ? { ...b, is_active: !b.is_active } : b))
+  function setActive(barber: Barber, isActive: boolean) {
+    onBarbersChange((prev) =>
+      prev.map((b) => (b.id === barber.id ? { ...b, is_active: isActive } : b))
     );
     startTransition(async () => {
-      const result = await toggleBarberActive({ id: barber.id, isActive: !barber.is_active });
-      if (!result.success) {
+      const result = await toggleBarberActive({ id: barber.id, isActive });
+      if (result.success) {
+        setDeactivating(null);
+        toast.success(isActive ? `${barber.name} está activo` : `${barber.name} quedó inactivo`);
+      } else {
         toast.error(result.error);
-        setBarbers((prev) =>
+        onBarbersChange((prev) =>
           prev.map((b) => (b.id === barber.id ? { ...b, is_active: barber.is_active } : b))
         );
       }
     });
   }
 
+  function handleToggleActive(barber: Barber) {
+    // Turning a barber off hides him from the booking site, so it gets a confirmation step.
+    if (barber.is_active !== false) {
+      setDeactivating(barber);
+      return;
+    }
+    setActive(barber, true);
+  }
+
   function handleSaved(saved: Barber, isNew: boolean) {
-    setBarbers((prev) => (isNew ? [...prev, saved] : prev.map((b) => (b.id === saved.id ? saved : b))));
+    onBarbersChange((prev) =>
+      isNew ? [...prev, saved] : prev.map((b) => (b.id === saved.id ? saved : b))
+    );
     setEditing(null);
     setCreating(false);
   }
@@ -62,7 +87,9 @@ export function BarbersPanel({ initialBarbers }: { initialBarbers: Barber[] }) {
     startTransition(async () => {
       const result = await unlinkBarberAccount({ barberId: barber.id });
       if (result.success) {
-        setBarbers((prev) => prev.map((b) => (b.id === barber.id ? { ...b, user_id: null } : b)));
+        onBarbersChange((prev) =>
+          prev.map((b) => (b.id === barber.id ? { ...b, user_id: null } : b))
+        );
         toast.success(`Cuenta desvinculada de ${barber.name}`);
       } else {
         toast.error(result.error);
@@ -72,115 +99,96 @@ export function BarbersPanel({ initialBarbers }: { initialBarbers: Barber[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">Barberos</h2>
-        <Button onClick={() => setCreating(true)} size="sm">
+        <Button onClick={() => setCreating(true)} className="h-11 sm:h-8">
           <Plus className="size-4" />
           Nuevo barbero
         </Button>
       </div>
 
       {unlinked.length > 0 && (
-        <div className="flex gap-2.5 rounded-xl border border-border bg-muted/40 p-3 text-sm">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <p className="text-muted-foreground">
-            Sin cuenta vinculada: <span className="text-foreground">{unlinked.map((b) => b.name).join(", ")}</span>.
-            Hasta que se vincule una cuenta no pueden entrar a su agenda.
-          </p>
+        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3">
+          <div className="flex gap-2.5">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-destructive">
+                {unlinked.length === 1
+                  ? "1 barbero no puede entrar a su agenda"
+                  : `${unlinked.length} barberos no pueden entrar a su agenda`}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Sin una cuenta vinculada, la agenda les muestra un error y no ven sus turnos.
+                Vincula el correo de cada uno para desbloquearlos.
+              </p>
+
+              <div className="mt-3 space-y-2">
+                {unlinked.map((barber) => (
+                  <div
+                    key={barber.id}
+                    className="flex flex-col gap-2 rounded-lg bg-background p-2 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <span className="truncate text-sm font-medium">{barber.name}</span>
+                    <Button
+                      className="h-11 w-full sm:h-9 sm:w-auto"
+                      onClick={() => setLinking(barber)}
+                    >
+                      <Link2 className="size-4" />
+                      Vincular cuenta
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Nombre</TableHead>
-              <TableHead>PIN</TableHead>
-              <TableHead>Comisión</TableHead>
-              <TableHead>Cuenta</TableHead>
-              <TableHead>Activo</TableHead>
-              <TableHead className="w-24" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {barbers.map((barber) => (
-              <TableRow key={barber.id}>
-                <TableCell className="font-medium">
-                  {barber.name}
-                  {!barber.is_active && (
-                    <Badge variant="secondary" className="ml-2">
-                      Inactivo
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell className="tabular-nums">{barber.pin}</TableCell>
-                <TableCell>{barber.commission_pct}%</TableCell>
-                <TableCell>
-                  {barber.user_id ? (
-                    <Badge variant="outline">Vinculada</Badge>
-                  ) : (
-                    <Badge variant="secondary">Sin cuenta</Badge>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Switch
-                    checked={barber.is_active ?? true}
-                    onCheckedChange={() => handleToggleActive(barber)}
-                    disabled={isPending}
-                    aria-label="Activo"
-                  />
-                </TableCell>
-                <TableCell>
-                  <div className="flex justify-end gap-1">
-                    {barber.user_id ? (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        disabled={isPending}
-                        onClick={() => handleUnlink(barber)}
-                        aria-label={`Desvincular cuenta de ${barber.name}`}
-                        title="Desvincular cuenta"
-                      >
-                        <Link2Off className="size-3.5" />
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => setLinking(barber)}
-                        aria-label={`Vincular cuenta a ${barber.name}`}
-                        title="Vincular cuenta"
-                      >
-                        <Link2 className="size-3.5" />
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => setEditing(barber)}
-                      aria-label={`Editar ${barber.name}`}
-                    >
-                      <Pencil className="size-3.5" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {barbers.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                  Sin barberos todavía
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {barbers.length === 0 ? (
+        <div className="flex flex-col items-center rounded-xl border border-dashed border-border px-4 py-12 text-center">
+          <p className="text-sm font-medium text-foreground">Todavía no hay barberos</p>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            Crea el primero con «Nuevo barbero» y después vincúlale una cuenta para que pueda
+            abrir su agenda.
+          </p>
+          <Button className="mt-4 h-11" onClick={() => setCreating(true)}>
+            <Plus className="size-4" />
+            Nuevo barbero
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {barbers.map((barber) => (
+            <BarberRow
+              key={barber.id}
+              barber={barber}
+              isPending={isPending}
+              onEdit={() => setEditing(barber)}
+              onLink={() => setLinking(barber)}
+              onUnlink={() => handleUnlink(barber)}
+              onToggleActive={() => handleToggleActive(barber)}
+            />
+          ))}
+        </div>
+      )}
 
       <p className="text-xs text-muted-foreground">
         La cuenta de acceso se crea primero en Supabase (o la crea el barbero desde el registro).
-        Después vinculala acá con el mismo correo para que pueda entrar a su agenda.
+        Después vincúlala aquí con el mismo correo para que pueda entrar a su agenda.
       </p>
+
+      <ConfirmDialog
+        open={!!deactivating}
+        title={`¿Desactivar a ${deactivating?.name ?? ""}?`}
+        description="Deja de aparecer en la web de reservas y nadie puede pedirle turno. Los turnos ya agendados siguen en su agenda. Puedes reactivarlo cuando quieras."
+        confirmLabel="Desactivar"
+        pendingLabel="Desactivando..."
+        isPending={isPending}
+        onConfirm={() => deactivating && setActive(deactivating, false)}
+        onOpenChange={(open) => {
+          if (!open) setDeactivating(null);
+        }}
+      />
 
       <LinkAccountDialog
         key={linking?.id ?? "link"}
@@ -189,7 +197,9 @@ export function BarbersPanel({ initialBarbers }: { initialBarbers: Barber[] }) {
           if (!open) setLinking(null);
         }}
         onLinked={(barberId, userId) => {
-          setBarbers((prev) => prev.map((b) => (b.id === barberId ? { ...b, user_id: userId } : b)));
+          onBarbersChange((prev) =>
+            prev.map((b) => (b.id === barberId ? { ...b, user_id: userId } : b))
+          );
           setLinking(null);
         }}
       />
@@ -206,6 +216,92 @@ export function BarbersPanel({ initialBarbers }: { initialBarbers: Barber[] }) {
         }}
         onSaved={handleSaved}
       />
+    </div>
+  );
+}
+
+function BarberRow({
+  barber,
+  isPending,
+  onEdit,
+  onLink,
+  onUnlink,
+  onToggleActive,
+}: {
+  barber: Barber;
+  isPending: boolean;
+  onEdit: () => void;
+  onLink: () => void;
+  onUnlink: () => void;
+  onToggleActive: () => void;
+}) {
+  const missingAccount = isUnlinked(barber);
+
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center sm:gap-4">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{barber.name}</span>
+          {barber.is_active === false && <Badge variant="secondary">Inactivo</Badge>}
+          {missingAccount && (
+            <Badge variant="destructive" className="gap-1">
+              <TriangleAlert className="size-3" />
+              Sin cuenta
+            </Badge>
+          )}
+          {barber.user_id && <Badge variant="outline">Cuenta vinculada</Badge>}
+        </div>
+        <div className="mt-1 text-sm text-muted-foreground">
+          <span className="tabular-nums">PIN {barber.pin}</span>
+          <span aria-hidden> · </span>
+          <span className="tabular-nums">{barber.commission_pct}% de comisión</span>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 sm:justify-end">
+        <label className="flex h-11 items-center gap-2 text-sm text-muted-foreground sm:h-9">
+          <Switch
+            checked={barber.is_active ?? true}
+            onCheckedChange={onToggleActive}
+            disabled={isPending}
+            aria-label={`Activo: ${barber.name}`}
+          />
+          Activo
+        </label>
+
+        <div className="flex items-center gap-1">
+          {barber.user_id ? (
+            <Button
+              variant="ghost"
+              className="size-11 sm:size-9"
+              disabled={isPending}
+              onClick={onUnlink}
+              aria-label={`Desvincular cuenta de ${barber.name}`}
+              title="Desvincular cuenta"
+            >
+              <Link2Off className="size-4" />
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              className="h-11 sm:h-9"
+              onClick={onLink}
+              aria-label={`Vincular cuenta a ${barber.name}`}
+            >
+              <Link2 className="size-4" />
+              Vincular
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            className="size-11 sm:size-9"
+            onClick={onEdit}
+            aria-label={`Editar ${barber.name}`}
+          >
+            <Pencil className="size-4" />
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -240,11 +336,11 @@ function LinkAccountDialog({
 
   return (
     <Dialog open={!!barber} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Vincular cuenta{barber ? ` a ${barber.name}` : ""}</DialogTitle>
           <DialogDescription>
-            Ingresá el correo de una cuenta que ya exista en Supabase. Si no existe, creala
+            Ingresa el correo de una cuenta que ya exista en Supabase. Si no existe, créala
             primero desde el panel de Supabase.
           </DialogDescription>
         </DialogHeader>
@@ -254,7 +350,9 @@ function LinkAccountDialog({
           <Input
             id="link-email"
             type="email"
+            inputMode="email"
             autoComplete="off"
+            className="h-11"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             onKeyDown={(e) => {
@@ -265,7 +363,11 @@ function LinkAccountDialog({
         </div>
 
         <DialogFooter>
-          <Button className="w-full" disabled={!isValid || isPending} onClick={handleSubmit}>
+          <Button
+            className="h-11 w-full text-base"
+            disabled={!isValid || isPending}
+            onClick={handleSubmit}
+          >
             {isPending ? "Vinculando..." : "Vincular"}
           </Button>
         </DialogFooter>
@@ -337,15 +439,25 @@ function BarberFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{barber ? "Editar barbero" : "Nuevo barbero"}</DialogTitle>
+          {!barber && (
+            <DialogDescription>
+              Después de crearlo, vincúlale una cuenta para que pueda abrir su agenda.
+            </DialogDescription>
+          )}
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="barber-name">Nombre</Label>
-            <Input id="barber-name" value={name} onChange={(e) => setName(e.target.value)} />
+            <Input
+              id="barber-name"
+              className="h-11"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
@@ -353,6 +465,7 @@ function BarberFormDialog({
               <Input
                 id="barber-pin"
                 inputMode="numeric"
+                className="h-11"
                 value={pin}
                 onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
                 maxLength={6}
@@ -363,8 +476,10 @@ function BarberFormDialog({
               <Input
                 id="barber-commission"
                 type="number"
+                inputMode="numeric"
                 min={0}
                 max={100}
+                className="h-11"
                 value={commissionPct}
                 onChange={(e) => setCommissionPct(e.target.value)}
               />
@@ -374,6 +489,7 @@ function BarberFormDialog({
             <Label htmlFor="barber-photo">URL de foto (opcional)</Label>
             <Input
               id="barber-photo"
+              className="h-11"
               value={photoUrl ?? ""}
               onChange={(e) => setPhotoUrl(e.target.value)}
               placeholder="https://..."
@@ -382,7 +498,11 @@ function BarberFormDialog({
         </div>
 
         <DialogFooter>
-          <Button className="w-full" disabled={!isValid || isPending} onClick={handleSubmit}>
+          <Button
+            className="h-11 w-full text-base"
+            disabled={!isValid || isPending}
+            onClick={handleSubmit}
+          >
             {isPending ? "Guardando..." : "Guardar"}
           </Button>
         </DialogFooter>

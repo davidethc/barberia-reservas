@@ -40,7 +40,7 @@ export async function getAgendaForDate(date: string): Promise<ActionResult<Agend
   if (!barber) {
     return {
       success: false,
-      error: "No se encontró un barbero asociado a tu cuenta. Contactá al administrador.",
+      error: "No se encontró un barbero asociado a tu cuenta. Contacta al administrador.",
     };
   }
 
@@ -195,7 +195,7 @@ export async function createBlock(input: unknown): Promise<ActionResult<AgendaBl
     revalidatePath("/agenda");
     return { success: true, data: block as AgendaBlock };
   } catch {
-    return { success: false, error: "No se pudo crear el bloqueo. Intentá de nuevo." };
+    return { success: false, error: "No se pudo crear el bloqueo. Intenta de nuevo." };
   }
 }
 
@@ -221,7 +221,7 @@ export async function deleteBlock(input: unknown): Promise<ActionResult<{ blockI
     revalidatePath("/agenda");
     return { success: true, data: { blockId } };
   } catch {
-    return { success: false, error: "No se pudo eliminar el bloqueo. Intentá de nuevo." };
+    return { success: false, error: "No se pudo eliminar el bloqueo. Intenta de nuevo." };
   }
 }
 
@@ -231,9 +231,9 @@ function describeConflicts(
   const first = conflicts[0];
   if (conflicts.length === 1 && first) {
     const who = first.clients?.name ?? "un cliente";
-    return `Ya tenés un turno con ${who} a las ${formatTime(first.start_time)}. Cancelalo antes de bloquear ese horario.`;
+    return `Ya tienes un turno con ${who} a las ${formatTime(first.start_time)}. Cancélalo antes de bloquear ese horario.`;
   }
 
   const times = conflicts.map((c) => formatTime(c.start_time)).join(", ");
-  return `Ya tenés ${conflicts.length} turnos en ese rango (${times}). Cancelalos antes de bloquear ese horario.`;
+  return `Ya tienes ${conflicts.length} turnos en ese rango (${times}). Cancélalos antes de bloquear ese horario.`;
 }
