@@ -18,6 +18,28 @@ export const barberScheduleRepo = {
     return data;
   },
 
+  /** Half-open comparison: a block ending at 13:00 does not collide with one starting there. */
+  async getOverlappingBlocks(
+    barberId: string,
+    date: string,
+    startTime: string,
+    endTime: string
+  ) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("barber_schedules")
+      .select("id, start_time, end_time")
+      .eq("barber_id", barberId)
+      .eq("date", date)
+      .eq("type", BLOCK_TYPE)
+      .lt("start_time", endTime)
+      .gt("end_time", startTime)
+      .order("start_time");
+
+    if (error) throw error;
+    return data;
+  },
+
   async createBlock(data: {
     barberId: string;
     date: string;

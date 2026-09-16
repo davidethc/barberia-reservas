@@ -74,14 +74,22 @@ export const barberRepo = {
     return data ?? [];
   },
 
-  async create(data: {
-    name: string;
-    photoUrl?: string | null;
-    pin: string;
-    commissionPct: number;
-  }) {
-    const supabase = await createClient();
-    const { data: barber, error } = await supabase
+  /**
+   * Recibe el cliente porque el alta con cuenta corre sobre el cliente administrativo: la
+   * cuenta de auth y su fila de barbero se crean con el mismo, para poder deshacer la cuenta
+   * si el insert falla. Siempre entra como `barber` — el alta nunca reparte permisos de admin.
+   */
+  async insertWithAccount(
+    admin: SupabaseClient<Database>,
+    data: {
+      name: string;
+      photoUrl?: string | null;
+      pin: string;
+      commissionPct: number;
+      userId: string;
+    }
+  ) {
+    const { data: barber, error } = await admin
       .from("barbers")
       .insert({
         business_id: BUSINESS_ID,
@@ -89,6 +97,8 @@ export const barberRepo = {
         photo_url: data.photoUrl ?? null,
         pin: data.pin,
         commission_pct: data.commissionPct,
+        user_id: data.userId,
+        role: "barber",
       })
       .select("id")
       .single();

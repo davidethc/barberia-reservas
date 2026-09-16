@@ -111,11 +111,14 @@ export function CommissionsPanel() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        <SummaryCard label="Servicios" value={String(totals.servicios)} />
-        <SummaryCard label="Ingresos" value={formatPrice(totals.ingreso)} />
-        <SummaryCard label="Comisiones" value={formatPrice(totals.comision)} />
-      </div>
+      {/* Tres ceros antes de la explicación se leen como un error del reporte. */}
+      {rows.length > 0 && (
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
+          <SummaryCard label="Servicios" value={String(totals.servicios)} />
+          <SummaryCard label="Ingresos" value={formatPrice(totals.ingreso)} />
+          <SummaryCard label="Comisiones" value={formatPrice(totals.comision)} />
+        </div>
+      )}
 
       {needsRange ? (
         <div className="rounded-xl border border-dashed border-border px-4 py-12 text-center">

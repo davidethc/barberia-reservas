@@ -181,6 +181,23 @@ export async function createBlock(input: unknown): Promise<ActionResult<AgendaBl
       return { success: false, error: describeConflicts(conflicts) };
     }
 
+    // Sin esto, tocar "Todo el día" dos veces deja dos bloqueos idénticos y borrar
+    // uno de ellos deja el día bloqueado sin nada visible que lo explique.
+    const existing = await barberScheduleRepo.getOverlappingBlocks(
+      barber.id,
+      date,
+      startTime,
+      endTime
+    );
+
+    if (existing.length > 0) {
+      const first = existing[0]!;
+      return {
+        success: false,
+        error: `Ya tienes bloqueado de ${formatTime(first.start_time)} a ${formatTime(first.end_time)}.`,
+      };
+    }
+
     const block = await barberScheduleRepo.createBlock({
       barberId: barber.id,
       date,

@@ -25,15 +25,4 @@ export const paymentRepo = {
     if (error) throw error;
     return paymentId;
   },
-
-  async getDailySummary(date: string) {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("barber_commissions")
-      .select("*")
-      .eq("fecha", date);
-
-    if (error) throw error;
-    return data;
-  },
 };

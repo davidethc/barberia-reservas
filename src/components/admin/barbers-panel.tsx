@@ -3,12 +3,14 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
-  createBarber,
+  createBarberWithAccount,
   updateBarber,
   toggleBarberActive,
   linkBarberAccount,
   unlinkBarberAccount,
+  resetBarberPassword,
 } from "@/app/actions/admin";
+import { PASSWORD_MIN_LENGTH } from "@/lib/schemas/admin";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,7 +25,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/staff/confirm-dialog";
-import { Link2, Link2Off, Pencil, Plus, TriangleAlert } from "lucide-react";
+import { KeyRound, Link2, Link2Off, Pencil, Plus, TriangleAlert } from "lucide-react";
 import type { Database } from "@/types/database";
 
 type Barber = Database["public"]["Tables"]["barbers"]["Row"];
@@ -43,6 +45,7 @@ export function BarbersPanel({
   const [editing, setEditing] = useState<Barber | null>(null);
   const [creating, setCreating] = useState(false);
   const [linking, setLinking] = useState<Barber | null>(null);
+  const [resetting, setResetting] = useState<Barber | null>(null);
   const [deactivating, setDeactivating] = useState<Barber | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -166,6 +169,7 @@ export function BarbersPanel({
               onEdit={() => setEditing(barber)}
               onLink={() => setLinking(barber)}
               onUnlink={() => handleUnlink(barber)}
+              onResetPassword={() => setResetting(barber)}
               onToggleActive={() => handleToggleActive(barber)}
             />
           ))}
@@ -173,8 +177,8 @@ export function BarbersPanel({
       )}
 
       <p className="text-xs text-muted-foreground">
-        La cuenta de acceso se crea primero en Supabase (o la crea el barbero desde el registro).
-        Después vincúlala aquí con el mismo correo para que pueda entrar a su agenda.
+        Al crear un barbero se crea también su acceso, y puede entrar de inmediato. Vincular
+        cuenta sirve para un barbero que ya tenía uno.
       </p>
 
       <ConfirmDialog
@@ -204,6 +208,15 @@ export function BarbersPanel({
         }}
       />
 
+      <ResetPasswordDialog
+        key={resetting?.id ?? "reset"}
+        barber={resetting}
+        onOpenChange={(open) => {
+          if (!open) setResetting(null);
+        }}
+        onDone={() => setResetting(null)}
+      />
+
       <BarberFormDialog
         key={editing?.id ?? "create"}
         barber={editing}
@@ -226,6 +239,7 @@ function BarberRow({
   onEdit,
   onLink,
   onUnlink,
+  onResetPassword,
   onToggleActive,
 }: {
   barber: Barber;
@@ -233,6 +247,7 @@ function BarberRow({
   onEdit: () => void;
   onLink: () => void;
   onUnlink: () => void;
+  onResetPassword: () => void;
   onToggleActive: () => void;
 }) {
   const missingAccount = isUnlinked(barber);
@@ -271,16 +286,28 @@ function BarberRow({
 
         <div className="flex items-center gap-1">
           {barber.user_id ? (
-            <Button
-              variant="ghost"
-              className="size-11 sm:size-9"
-              disabled={isPending}
-              onClick={onUnlink}
-              aria-label={`Desvincular cuenta de ${barber.name}`}
-              title="Desvincular cuenta"
-            >
-              <Link2Off className="size-4" />
-            </Button>
+            <>
+              <Button
+                variant="ghost"
+                className="size-11 sm:size-9"
+                disabled={isPending}
+                onClick={onResetPassword}
+                aria-label={`Restablecer contraseña de ${barber.name}`}
+                title="Restablecer contraseña"
+              >
+                <KeyRound className="size-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                className="size-11 sm:size-9"
+                disabled={isPending}
+                onClick={onUnlink}
+                aria-label={`Desvincular cuenta de ${barber.name}`}
+                title="Desvincular cuenta"
+              >
+                <Link2Off className="size-4" />
+              </Button>
+            </>
           ) : (
             <Button
               variant="outline"
@@ -303,6 +330,76 @@ function BarberRow({
         </div>
       </div>
     </div>
+  );
+}
+
+function ResetPasswordDialog({
+  barber,
+  onOpenChange,
+  onDone,
+}: {
+  barber: Barber | null;
+  onOpenChange: (open: boolean) => void;
+  onDone: () => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  const isValid = password.length >= PASSWORD_MIN_LENGTH;
+
+  function handleSubmit() {
+    if (!barber || !isValid) return;
+
+    startTransition(async () => {
+      const result = await resetBarberPassword({ barberId: barber.id, password });
+      if (result.success) {
+        toast.success(`Contraseña actualizada para ${barber.name}`);
+        onDone();
+      } else {
+        toast.error(result.error);
+      }
+    });
+  }
+
+  return (
+    <Dialog open={!!barber} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>
+            Restablecer contraseña{barber ? ` de ${barber.name}` : ""}
+          </DialogTitle>
+          <DialogDescription>
+            La anterior deja de servir apenas guardes. Dile la nueva y pídele que la cambie.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="reset-password">Nueva contraseña</Label>
+          <Input
+            id="reset-password"
+            type="text"
+            autoComplete="off"
+            className="h-11"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSubmit();
+            }}
+            placeholder={`Mínimo ${PASSWORD_MIN_LENGTH} caracteres`}
+          />
+        </div>
+
+        <DialogFooter>
+          <Button
+            className="h-11 w-full text-base"
+            disabled={!isValid || isPending}
+            onClick={handleSubmit}
+          >
+            {isPending ? "Guardando..." : "Guardar contraseña"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -340,8 +437,8 @@ function LinkAccountDialog({
         <DialogHeader>
           <DialogTitle>Vincular cuenta{barber ? ` a ${barber.name}` : ""}</DialogTitle>
           <DialogDescription>
-            Ingresa el correo de una cuenta que ya exista en Supabase. Si no existe, créala
-            primero desde el panel de Supabase.
+            Para un barbero que ya tiene cuenta. Si todavía no tiene, créalo con Nuevo
+            barbero: ahí el acceso se genera junto con la ficha.
           </DialogDescription>
         </DialogHeader>
 
@@ -391,13 +488,19 @@ function BarberFormDialog({
   const [pin, setPin] = useState(barber?.pin ?? "");
   const [commissionPct, setCommissionPct] = useState(String(barber?.commission_pct ?? 40));
   const [photoUrl, setPhotoUrl] = useState(barber?.photo_url ?? "");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isPending, startTransition] = useTransition();
 
+  const isNew = !barber;
+  const accountIsValid =
+    !isNew || (/^\S+@\S+\.\S+$/.test(email.trim()) && password.length >= PASSWORD_MIN_LENGTH);
   const isValid =
     name.trim().length >= 2 &&
     /^\d{4,6}$/.test(pin) &&
     Number(commissionPct) >= 0 &&
-    Number(commissionPct) <= 100;
+    Number(commissionPct) <= 100 &&
+    accountIsValid;
 
   function handleSubmit() {
     if (!isValid) return;
@@ -410,30 +513,43 @@ function BarberFormDialog({
         photoUrl: photoUrl.trim() || null,
       };
 
-      const result = barber
-        ? await updateBarber({ id: barber.id, ...payload })
-        : await createBarber(payload);
+      const saved = (id: string, userId: string | null): Barber => ({
+        id,
+        business_id: barber?.business_id ?? "",
+        user_id: userId,
+        name: payload.name,
+        photo_url: payload.photoUrl,
+        pin: payload.pin,
+        commission_pct: payload.commissionPct,
+        role: barber?.role ?? "barber",
+        is_active: barber?.is_active ?? true,
+        created_at: barber?.created_at ?? null,
+      });
 
-      if (result.success) {
-        toast.success(barber ? "Barbero actualizado" : "Barbero creado");
-        onSaved(
-          {
-            id: result.data.id,
-            business_id: barber?.business_id ?? "",
-            user_id: barber?.user_id ?? null,
-            name: payload.name,
-            photo_url: payload.photoUrl,
-            pin: payload.pin,
-            commission_pct: payload.commissionPct,
-            role: barber?.role ?? "barber",
-            is_active: barber?.is_active ?? true,
-            created_at: barber?.created_at ?? null,
-          },
-          !barber
-        );
-      } else {
-        toast.error(result.error);
+      if (barber) {
+        const result = await updateBarber({ id: barber.id, ...payload });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+
+        toast.success("Barbero actualizado");
+        onSaved(saved(result.data.id, barber.user_id), false);
+        return;
       }
+
+      const result = await createBarberWithAccount({
+        ...payload,
+        email: email.trim(),
+        password,
+      });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+
+      toast.success("Barbero creado con su acceso");
+      onSaved(saved(result.data.id, result.data.userId), true);
     });
   }
 
@@ -442,9 +558,10 @@ function BarberFormDialog({
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{barber ? "Editar barbero" : "Nuevo barbero"}</DialogTitle>
-          {!barber && (
+          {isNew && (
             <DialogDescription>
-              Después de crearlo, vincúlale una cuenta para que pueda abrir su agenda.
+              Se crea junto con su acceso. Entrégale el correo y la contraseña; podrá entrar
+              de inmediato y aparecerá como reservable para los clientes.
             </DialogDescription>
           )}
         </DialogHeader>
@@ -495,6 +612,39 @@ function BarberFormDialog({
               placeholder="https://..."
             />
           </div>
+
+          {isNew && (
+            <div className="space-y-4 rounded-xl border border-border p-4">
+              <p className="text-sm font-medium text-foreground">Datos de acceso</p>
+              <div className="space-y-1.5">
+                <Label htmlFor="barber-email">Correo</Label>
+                <Input
+                  id="barber-email"
+                  type="email"
+                  autoComplete="off"
+                  className="h-11"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="barbero@correo.com"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="barber-password">Contraseña inicial</Label>
+                <Input
+                  id="barber-password"
+                  type="text"
+                  autoComplete="off"
+                  className="h-11"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={`Mínimo ${PASSWORD_MIN_LENGTH} caracteres`}
+                />
+                <p className="text-sm text-muted-foreground">
+                  Se muestra en claro para que puedas dictársela. Dile que la cambie.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         <DialogFooter>

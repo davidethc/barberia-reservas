@@ -28,7 +28,6 @@ export const BarberInputSchema = z.object({
   commissionPct: z.number().min(0).max(100),
 });
 
-export const CreateBarberSchema = BarberInputSchema;
 export const UpdateBarberSchema = BarberInputSchema.extend({
   id: z.string().uuid(),
 });
@@ -40,6 +39,25 @@ export const LinkBarberAccountSchema = z.object({
 
 export const UnlinkBarberAccountSchema = z.object({
   barberId: z.string().uuid(),
+});
+
+/** Supabase rechaza contraseñas de menos de 6; pedimos 8 para no entregar accesos frágiles. */
+export const PASSWORD_MIN_LENGTH = 8;
+
+export const CreateBarberWithAccountSchema = BarberInputSchema.extend({
+  email: z.string().trim().email("Correo inválido").max(255),
+  password: z
+    .string()
+    .min(PASSWORD_MIN_LENGTH, `Mínimo ${PASSWORD_MIN_LENGTH} caracteres`)
+    .max(72, "Máximo 72 caracteres"),
+});
+
+export const ResetBarberPasswordSchema = z.object({
+  barberId: z.string().uuid(),
+  password: z
+    .string()
+    .min(PASSWORD_MIN_LENGTH, `Mínimo ${PASSWORD_MIN_LENGTH} caracteres`)
+    .max(72, "Máximo 72 caracteres"),
 });
 
 export const BusinessHoursInputSchema = z.object({
@@ -59,5 +77,6 @@ export type UpdateServiceInput = z.infer<typeof UpdateServiceSchema>;
 export type BarberInput = z.infer<typeof BarberInputSchema>;
 export type UpdateBarberInput = z.infer<typeof UpdateBarberSchema>;
 export type LinkBarberAccountInput = z.infer<typeof LinkBarberAccountSchema>;
+export type CreateBarberWithAccountInput = z.infer<typeof CreateBarberWithAccountSchema>;
 export type BusinessHoursInput = z.infer<typeof BusinessHoursInputSchema>;
 export type CommissionsReportRange = z.infer<typeof CommissionsReportRangeSchema>;

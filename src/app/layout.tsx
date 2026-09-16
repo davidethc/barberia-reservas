@@ -38,7 +38,13 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="es" className={cn("h-full", "antialiased", spaceGrotesk.variable, "font-sans", geist.variable)}>
+    // next-themes escribe la clase del tema en <html> antes de hidratar, así que
+    // el atributo nunca coincide con el del servidor.
+    <html
+      lang="es"
+      suppressHydrationWarning
+      className={cn("h-full", "antialiased", spaceGrotesk.variable, "font-sans", geist.variable)}
+    >
       <body
         className="min-h-full flex flex-col"
         style={{ fontFamily: "var(--font-space-grotesk), system-ui, sans-serif" }}

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { BUSINESS_ID } from "@/lib/constants";
 import { isCurrentUserAdmin } from "@/lib/staff";
 import { serviceRepo } from "@/lib/repositories/services";
@@ -20,10 +21,11 @@ import {
   UpdateServiceSchema,
   ReorderServicesSchema,
   ToggleActiveSchema,
-  CreateBarberSchema,
   UpdateBarberSchema,
   LinkBarberAccountSchema,
   UnlinkBarberAccountSchema,
+  CreateBarberWithAccountSchema,
+  ResetBarberPasswordSchema,
   BusinessHoursInputSchema,
   CommissionsReportRangeSchema,
 } from "@/lib/schemas/admin";
@@ -123,26 +125,6 @@ export async function reorderServices(input: unknown): Promise<ActionResult<null
 }
 
 // ---------- Barbers ----------
-
-export async function createBarber(input: unknown): Promise<ActionResult<{ id: string }>> {
-  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
-
-  const parsed = CreateBarberSchema.safeParse(input);
-  if (!parsed.success) return { success: false, error: "Datos inválidos" };
-
-  try {
-    const barber = await barberRepo.create({
-      name: parsed.data.name,
-      photoUrl: parsed.data.photoUrl || null,
-      pin: parsed.data.pin,
-      commissionPct: parsed.data.commissionPct,
-    });
-    revalidatePath("/admin");
-    return { success: true, data: { id: barber.id } };
-  } catch {
-    return { success: false, error: "No se pudo crear el barbero" };
-  }
-}
 
 export async function updateBarber(input: unknown): Promise<ActionResult<{ id: string }>> {
   if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
@@ -281,6 +263,106 @@ export async function updateClientNotes(
   } catch {
     return { success: false, error: "No se pudo guardar la nota" };
   }
+}
+
+// ---------- Alta de barbero con su acceso ----------
+
+function authErrorMessage(message: string, fallback: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("already been registered") || lower.includes("already registered")) {
+    return "Ya existe una cuenta con ese correo. Usa 'Vincular cuenta' en su lugar.";
+  }
+  if (lower.includes("password")) return "La contraseña no cumple el mínimo";
+  if (lower.includes("email") && lower.includes("invalid")) {
+    return "Supabase rechazó ese correo. Prueba con otra dirección.";
+  }
+  if (lower.includes("rate limit")) {
+    return "Supabase está limitando los intentos. Espera un momento y vuelve a probar.";
+  }
+  return fallback;
+}
+
+export async function createBarberWithAccount(
+  input: unknown
+): Promise<ActionResult<{ id: string; email: string; userId: string }>> {
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
+
+  const parsed = CreateBarberWithAccountSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const { email, password, name, photoUrl, pin, commissionPct } = parsed.data;
+  const admin = createAdminClient();
+
+  // `email_confirm` evita el correo de verificación: el acceso se entrega en mano, y el
+  // mailer del plan gratuito además está limitado por tasa.
+  const { data: created, error: authError } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
+
+  if (authError || !created.user) {
+    return {
+      success: false,
+      error: authErrorMessage(authError?.message ?? "", "No se pudo crear la cuenta"),
+    };
+  }
+
+  try {
+    const barber = await barberRepo.insertWithAccount(admin, {
+      name,
+      photoUrl,
+      pin,
+      commissionPct,
+      userId: created.user.id,
+    });
+
+    revalidatePath("/admin");
+    return { success: true, data: { id: barber.id, email, userId: created.user.id } };
+  } catch {
+    // Sin esto el correo queda ocupado por una cuenta que el admin no ve en ningún lado,
+    // y el segundo intento fallaría con "ya existe" sin forma de salir.
+    await admin.auth.admin.deleteUser(created.user.id);
+    return { success: false, error: "No se pudo crear el barbero. Intenta de nuevo." };
+  }
+}
+
+export async function resetBarberPassword(
+  input: unknown
+): Promise<ActionResult<{ id: string }>> {
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
+
+  const parsed = ResetBarberPasswordSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const { barberId, password } = parsed.data;
+  const admin = createAdminClient();
+
+  const { data: barber } = await admin
+    .from("barbers")
+    .select("user_id")
+    .eq("id", barberId)
+    .eq("business_id", BUSINESS_ID)
+    .single();
+
+  if (!barber?.user_id) {
+    return { success: false, error: "Ese barbero todavía no tiene cuenta" };
+  }
+
+  const { error } = await admin.auth.admin.updateUserById(barber.user_id, { password });
+
+  if (error) {
+    return {
+      success: false,
+      error: authErrorMessage(error.message, "No se pudo cambiar la contraseña"),
+    };
+  }
+
+  return { success: true, data: { id: barberId } };
 }
 
 // ---------- Business hours ----------

@@ -1,20 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 
 export const appointmentRepo = {
-  async getByBarberAndDate(barberId: string, date: string) {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("appointments")
-      .select("*, services(name, duration_minutes, price), clients(name, phone)")
-      .eq("barber_id", barberId)
-      .eq("date", date)
-      .not("status", "in", '("cancelled","no_show")')
-      .order("start_time");
-
-    if (error) throw error;
-    return data;
-  },
-
   /**
    * Computed inside Postgres so the public wizard needs no read access to the
    * appointment book or to anyone's blocks — the anon role has neither.
@@ -84,7 +70,7 @@ export const appointmentRepo = {
     return data;
   },
 
-  /** Same as `updateStatus`, but scoped to `barberId` to match the RLS policy. */
+  /** Scoped to `barberId` to match the RLS policy. */
   async updateStatusForBarber(id: string, barberId: string, status: string) {
     const supabase = await createClient();
     const { data, error } = await supabase

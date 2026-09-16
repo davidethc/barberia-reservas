@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   searchClients,
   updateClientNotes,
+  getClientStats,
   type ClientsSnapshot,
 } from "@/app/actions/admin";
 import type { ClientListItem, ClientSort, ClientStats } from "@/lib/repositories/clients";
@@ -74,7 +75,7 @@ export function ClientsPanel({ initial }: { initial: ClientsSnapshot | null }) {
   const [sort, setSort] = useState<ClientSort>("visits");
   const [clients, setClients] = useState<ClientListItem[]>(initial?.items ?? []);
   const [hasMore, setHasMore] = useState(initial?.hasMore ?? false);
-  const [stats] = useState<ClientStats | null>(initial?.stats ?? null);
+  const [stats, setStats] = useState<ClientStats | null>(initial?.stats ?? null);
   const [error, setError] = useState<string | null>(
     initial ? null : "No se pudieron cargar los clientes."
   );
@@ -123,7 +124,15 @@ export function ClientsPanel({ initial }: { initial: ClientsSnapshot | null }) {
   function retry() {
     setError(null);
     startSearch(async () => {
-      const result = await searchClients({ term, sort, offset: 0 });
+      // Las tarjetas también se recargan: si la carga inicial falló, `stats` quedaba
+      // en null para siempre porque solo se reintentaba la lista.
+      const [result, statsResult] = await Promise.all([
+        searchClients({ term, sort, offset: 0 }),
+        getClientStats(),
+      ]);
+
+      if (statsResult.success) setStats(statsResult.data);
+
       if (result.success) {
         setClients(result.data.items);
         setHasMore(result.data.hasMore);
