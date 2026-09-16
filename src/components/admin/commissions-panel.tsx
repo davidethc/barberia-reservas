@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { toast } from "sonner";
 import type { DateRange } from "react-day-picker";
 import { getCommissionsReport, type CommissionRow } from "@/app/actions/admin";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { formatPrice, formatDate } from "@/lib/utils";
 
@@ -14,7 +14,7 @@ function toISODate(date: Date): string {
   return date.toISOString().split("T")[0]!;
 }
 
-function todayRange(): DateRange {
+function lastWeekRange(): DateRange {
   const today = new Date();
   const start = new Date(today);
   start.setDate(today.getDate() - 6);
@@ -22,8 +22,10 @@ function todayRange(): DateRange {
 }
 
 export function CommissionsPanel() {
-  const [range, setRange] = useState<DateRange | undefined>(todayRange());
+  const [range, setRange] = useState<DateRange | undefined>(lastWeekRange());
   const [rows, setRows] = useState<CommissionRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -35,12 +37,14 @@ export function CommissionsPanel() {
       const result = await getCommissionsReport({ from, to });
       if (result.success) {
         setRows(result.data);
+        setError(null);
       } else {
-        toast.error(result.error);
+        setRows([]);
+        setError(result.error);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range?.from?.getTime(), range?.to?.getTime()]);
+  }, [range?.from?.getTime(), range?.to?.getTime(), reloadKey]);
 
   const totals = rows.reduce(
     (acc, r) => ({
@@ -51,13 +55,45 @@ export function CommissionsPanel() {
     { servicios: 0, ingreso: 0, comision: 0 }
   );
 
+  const needsRange = !range?.from || !range?.to;
+
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Reporte de comisiones</h2>
 
+      <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+        <Button
+          variant="outline"
+          className="h-11 shrink-0 px-3 sm:h-9"
+          onClick={() => {
+            const today = new Date();
+            setRange({ from: today, to: today });
+          }}
+        >
+          Hoy
+        </Button>
+        <Button
+          variant="outline"
+          className="h-11 shrink-0 px-3 sm:h-9"
+          onClick={() => setRange(lastWeekRange())}
+        >
+          Últimos 7 días
+        </Button>
+        <Button
+          variant="outline"
+          className="h-11 shrink-0 px-3 sm:h-9"
+          onClick={() => {
+            const today = new Date();
+            setRange({ from: new Date(today.getFullYear(), today.getMonth(), 1), to: today });
+          }}
+        >
+          Este mes
+        </Button>
+      </div>
+
       <div className="flex flex-wrap items-start gap-4">
-        <Card className="w-fit">
-          <CardContent>
+        <Card className="w-full max-w-full sm:w-fit">
+          <CardContent className="overflow-x-auto">
             <Calendar
               mode="range"
               selected={range}
@@ -67,79 +103,83 @@ export function CommissionsPanel() {
             />
           </CardContent>
         </Card>
-
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => setRange(todayRange())}>
-            Últimos 7 días
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const today = new Date();
-              const start = new Date(today.getFullYear(), today.getMonth(), 1);
-              setRange({ from: start, to: today });
-            }}
-          >
-            Este mes
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const today = new Date();
-              setRange({ from: today, to: today });
-            }}
-          >
-            Hoy
-          </Button>
-        </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <SummaryCard label="Servicios" value={String(totals.servicios)} />
         <SummaryCard label="Ingresos" value={formatPrice(totals.ingreso)} />
         <SummaryCard label="Comisiones" value={formatPrice(totals.comision)} />
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Fecha</TableHead>
-              <TableHead>Barbero</TableHead>
-              <TableHead>Servicios</TableHead>
-              <TableHead>Ingresos</TableHead>
-              <TableHead>Comisión</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isPending ? (
+      {needsRange ? (
+        <div className="rounded-xl border border-dashed border-border px-4 py-12 text-center">
+          <p className="text-sm font-medium text-foreground">Elige un rango de fechas</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Toca el día de inicio y el de fin en el calendario, o usa un atajo de arriba.
+          </p>
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-8 text-center">
+          <p className="text-sm font-medium text-destructive">{error}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Puede ser la conexión. Intenta de nuevo en unos segundos.
+          </p>
+          <Button
+            variant="outline"
+            className="mt-3 h-11"
+            onClick={() => setReloadKey((k) => k + 1)}
+          >
+            Reintentar
+          </Button>
+        </div>
+      ) : isPending ? (
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-12 rounded-xl" />
+          ))}
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border px-4 py-12 text-center">
+          <p className="text-sm font-medium text-foreground">
+            No hay turnos cobrados en este rango
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Las comisiones aparecen cuando un barbero completa un turno y registra el pago.
+            Prueba con otro período.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-border">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                  Cargando...
-                </TableCell>
+                <TableHead>Fecha</TableHead>
+                <TableHead>Barbero</TableHead>
+                <TableHead className="text-right">Servicios</TableHead>
+                <TableHead className="text-right">Ingresos</TableHead>
+                <TableHead className="text-right">Comisión</TableHead>
               </TableRow>
-            ) : rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                  Sin datos en este rango
-                </TableCell>
-              </TableRow>
-            ) : (
-              rows.map((row, i) => (
+            </TableHeader>
+            <TableBody>
+              {rows.map((row, i) => (
                 <TableRow key={`${row.barber_id}-${row.fecha}-${i}`}>
                   <TableCell>{row.fecha ? formatDate(row.fecha) : "—"}</TableCell>
                   <TableCell className="font-medium">{row.name ?? "—"}</TableCell>
-                  <TableCell>{row.total_servicios ?? 0}</TableCell>
-                  <TableCell>{formatPrice(Number(row.ingreso_total ?? 0))}</TableCell>
-                  <TableCell>{formatPrice(Number(row.comision_total ?? 0))}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {row.total_servicios ?? 0}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatPrice(Number(row.ingreso_total ?? 0))}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatPrice(Number(row.comision_total ?? 0))}
+                  </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </div>
   );
 }
@@ -149,7 +189,7 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
     <Card size="sm">
       <CardContent>
         <div className="text-xs text-muted-foreground">{label}</div>
-        <div className="text-lg font-bold">{value}</div>
+        <div className="truncate text-base font-bold tabular-nums sm:text-lg">{value}</div>
       </CardContent>
     </Card>
   );

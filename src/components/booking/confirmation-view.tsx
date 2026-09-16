@@ -70,7 +70,7 @@ export function ConfirmationView({
           <div className="text-sm mt-2 space-y-0.5 text-muted-foreground">
             <div>💈 {booking.barberName}</div>
             <div>📅 {formatLongDate(booking.date)}</div>
-            <div>🕐 {formatTime(booking.time)} hs</div>
+            <div>🕐 {formatTime(booking.time)}</div>
             {business.address && <div>📍 {business.address}</div>}
           </div>
           <div className="text-xl font-bold mt-3 text-foreground">

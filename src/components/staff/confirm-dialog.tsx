@@ -12,8 +12,8 @@ import { Button } from "@/components/ui/button";
 
 /**
  * Confirmation step for anything that cannot be undone: cancelling a turn, marking a no-show,
- * deactivating a barber. The confirm button never sits under the thumb's resting spot on
- * mobile — cancel comes first in the stacked order.
+ * deactivating a barber. The footer stacks in reverse on mobile, so this order leaves the
+ * harmless "Volver" under the thumb and the destructive button further up.
  */
 export function ConfirmDialog({
   open,

@@ -174,7 +174,7 @@ export function ClientsPanel({ initial }: { initial: ClientsSnapshot | null }) {
           {term && (
             <Button
               variant="ghost"
-              className="absolute top-1/2 right-1 size-9 -translate-y-1/2"
+              className="absolute top-1/2 right-0 size-11 -translate-y-1/2"
               onClick={() => setTerm("")}
               aria-label="Limpiar búsqueda"
             >

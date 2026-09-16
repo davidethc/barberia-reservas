@@ -17,6 +17,10 @@ export const metadata: Metadata = {
   title: "Exclusive Barber Shop",
   description: "Reserva tu turno en Exclusive Barber Shop - Milagro, Ecuador",
   manifest: "/manifest.json",
+  // iOS ignores the manifest's icons; the home-screen icon comes from here.
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -28,7 +32,8 @@ export const viewport: Viewport = {
   themeColor: "#fafaf8",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // No maximumScale: the 16px inputs already stop iOS from zooming on focus,
+  // so locking the scale would only take pinch-zoom away from the client.
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

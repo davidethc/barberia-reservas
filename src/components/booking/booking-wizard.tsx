@@ -425,7 +425,7 @@ function ScheduleStep({
               {isOpen ? (
                 <span className="text-xs tabular-nums opacity-80">{formatDayNumber(date)}</span>
               ) : (
-                <span className="text-[0.625rem] font-medium uppercase tracking-wider">
+                <span className="text-[0.625rem] font-medium uppercase tracking-wider whitespace-nowrap">
                   Cerrado
                 </span>
               )}

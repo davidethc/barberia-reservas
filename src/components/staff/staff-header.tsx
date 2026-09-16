@@ -27,14 +27,14 @@ export function StaffHeader({ title, isAdmin = false }: { title: string; isAdmin
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80">
-      <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-4">
-        <div className="flex items-center gap-4">
-          <span className="text-sm font-semibold">{title}</span>
+      <div className="mx-auto flex h-14 max-w-3xl items-center justify-between gap-2 px-4">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+          <span className="hidden text-sm font-semibold sm:inline">{title}</span>
           <nav className="flex items-center gap-1">
             <Link
               href="/agenda"
               className={cn(
-                "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
+                "flex h-11 items-center rounded-md px-3 text-sm font-medium transition-colors",
                 pathname?.startsWith("/agenda")
                   ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -46,7 +46,7 @@ export function StaffHeader({ title, isAdmin = false }: { title: string; isAdmin
               <Link
                 href="/admin"
                 className={cn(
-                  "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
+                  "flex h-11 items-center rounded-md px-3 text-sm font-medium transition-colors",
                   pathname?.startsWith("/admin")
                     ? "bg-muted text-foreground"
                     : "text-muted-foreground hover:text-foreground"
@@ -57,8 +57,13 @@ export function StaffHeader({ title, isAdmin = false }: { title: string; isAdmin
             )}
           </nav>
         </div>
-        <Button variant="ghost" size="sm" onClick={handleSignOut} disabled={isPending}>
-          {isPending ? "Saliendo..." : "Cerrar sesión"}
+        <Button
+          variant="ghost"
+          className="h-11 shrink-0 px-3"
+          onClick={handleSignOut}
+          disabled={isPending}
+        >
+          {isPending ? "Saliendo..." : "Salir"}
         </Button>
       </div>
     </header>

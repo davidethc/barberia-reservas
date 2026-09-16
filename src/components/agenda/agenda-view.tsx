@@ -25,6 +25,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ConfirmDialog } from "@/components/staff/confirm-dialog";
 import { FULL_DAY_START, FULL_DAY_END } from "@/lib/constants";
 import { addMinutesToTime, formatDate, formatPrice, formatTime, cn } from "@/lib/utils";
 import { Ban, CalendarOff, ChevronLeft, ChevronRight, Phone, Trash2 } from "lucide-react";
@@ -64,6 +66,12 @@ function clampToDay(time: string): string {
   return time > FULL_DAY_END ? FULL_DAY_END : time;
 }
 
+function dayCountLabel(pending: number, total: number): string {
+  if (total === 0) return "Sin turnos";
+  const turnos = total === 1 ? "1 turno" : `${total} turnos`;
+  return pending > 0 ? `${turnos} · ${pending} por atender` : `${turnos} · todo cerrado`;
+}
+
 type TimelineItem =
   | { kind: "appointment"; id: string; at: string; appointment: AgendaAppointment }
   | { kind: "block"; id: string; at: string; block: AgendaBlock };
@@ -100,6 +108,11 @@ export function AgendaView({
   const [isMutating, startMutating] = useTransition();
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [isBlockDialogOpen, setIsBlockDialogOpen] = useState(false);
+  // Cancelling and marking a no-show cannot be undone, so both pass through a confirmation.
+  const [closing, setClosing] = useState<{
+    id: string;
+    reason: "cancelled" | "no_show";
+  } | null>(null);
 
   function loadDate(nextDate: string) {
     setDate(nextDate);
@@ -125,6 +138,7 @@ export function AgendaView({
             a.id === id ? { ...a, status: reason } : a
           ),
         }));
+        setClosing(null);
       } else {
         toast.error(result.error);
       }
@@ -179,29 +193,32 @@ export function AgendaView({
   const isToday = date === todayStr();
   const timeline = buildTimeline(day);
   const blockCount = day.blocks.length;
+  const pendingCount = day.appointments.filter((a) => a.status === "pending").length;
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <div className="mb-4 flex items-center justify-between gap-2">
+      <div className="mb-3 flex items-center justify-between gap-2">
         <Button
           variant="outline"
-          size="icon-lg"
+          className="size-11 shrink-0"
           onClick={() => loadDate(shiftDate(date, -1))}
           aria-label="Día anterior"
         >
           <ChevronLeft className="size-5" />
         </Button>
 
-        <div className="text-center">
-          <div className="text-lg font-semibold capitalize">
+        <div className="min-w-0 text-center">
+          <div className="truncate text-lg font-semibold capitalize">
             {isToday ? "Hoy" : formatDate(date)}
           </div>
-          {!isToday && <div className="text-xs text-muted-foreground">{formatDate(date)}</div>}
+          <div className="text-xs text-muted-foreground">
+            {isToday ? formatDate(date) : dayCountLabel(pendingCount, day.appointments.length)}
+          </div>
         </div>
 
         <Button
           variant="outline"
-          size="icon-lg"
+          className="size-11 shrink-0"
           onClick={() => loadDate(shiftDate(date, 1))}
           aria-label="Día siguiente"
         >
@@ -209,37 +226,63 @@ export function AgendaView({
         </Button>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          {blockCount === 0
-            ? "No tienes bloqueos este día"
-            : blockCount === 1
-              ? "1 bloqueo este día"
-              : `${blockCount} bloqueos este día`}
-        </p>
-        <Button
-          variant="outline"
-          className="h-11 w-full gap-2 sm:w-auto"
-          disabled={isLoading}
-          onClick={() => setIsBlockDialogOpen(true)}
-        >
-          <Ban className="size-4" />
-          Bloquear horario
-        </Button>
+      <div className="mb-6 space-y-2">
+        {!isToday && (
+          <Button
+            variant="secondary"
+            className="h-11 w-full"
+            disabled={isLoading}
+            onClick={() => loadDate(todayStr())}
+          >
+            Volver a hoy
+          </Button>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-muted-foreground">
+            {isToday ? dayCountLabel(pendingCount, day.appointments.length) : null}
+            {isToday && blockCount > 0 && <span aria-hidden> · </span>}
+            {blockCount === 1
+              ? "1 bloqueo"
+              : blockCount > 1
+                ? `${blockCount} bloqueos`
+                : !isToday
+                  ? "Sin bloqueos este día"
+                  : null}
+          </p>
+          <Button
+            variant="outline"
+            className="h-11 w-full gap-2 sm:w-auto"
+            disabled={isLoading}
+            onClick={() => setIsBlockDialogOpen(true)}
+          >
+            <Ban className="size-4" />
+            Bloquear horario
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
         <div className="space-y-3">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-28 animate-pulse rounded-xl bg-muted" />
+            <Skeleton key={i} className="h-28 rounded-xl" />
           ))}
         </div>
       ) : timeline.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16 text-center">
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border px-4 py-16 text-center">
           <p className="text-sm font-medium text-foreground">No hay turnos este día</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Disfrutá el descanso, o revisá otro día.
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            Disfruta el descanso. Si no vas a atender, bloquea el día para que nadie reserve;
+            con las flechas de arriba revisas otra fecha.
           </p>
+          <Button
+            variant="outline"
+            className="mt-4 h-11 gap-2"
+            onClick={() => setIsBlockDialogOpen(true)}
+          >
+            <Ban className="size-4" />
+            Bloquear horario
+          </Button>
         </div>
       ) : (
         <div className="space-y-3">
@@ -250,7 +293,7 @@ export function AgendaView({
                 appointment={item.appointment}
                 isMutating={isMutating}
                 onComplete={() => setCompletingId(item.id)}
-                onCancel={(reason) => handleCancel(item.id, reason)}
+                onCancel={(reason) => setClosing({ id: item.id, reason })}
               />
             ) : (
               <BlockCard
@@ -263,6 +306,25 @@ export function AgendaView({
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!closing}
+        title={closing?.reason === "cancelled" ? "¿Cancelar este turno?" : "¿Marcar que no vino?"}
+        description={
+          closing?.reason === "cancelled"
+            ? "El turno queda cancelado y el horario se libera. No se puede deshacer: si el cliente aparece, vas a tener que cargarlo de nuevo."
+            : "Queda registrado como no asistió y no se cobra nada. No se puede deshacer."
+        }
+        confirmLabel={closing?.reason === "cancelled" ? "Sí, cancelar" : "Sí, no vino"}
+        cancelLabel="Volver"
+        pendingLabel="Guardando..."
+        tone={closing?.reason === "cancelled" ? "destructive" : "default"}
+        isPending={isMutating}
+        onConfirm={() => closing && handleCancel(closing.id, closing.reason)}
+        onOpenChange={(open) => {
+          if (!open) setClosing(null);
+        }}
+      />
 
       <CompleteDialog
         appointment={completingAppointment}
@@ -313,8 +375,7 @@ function BlockCard({
 
       <Button
         variant="ghost"
-        size="icon-lg"
-        className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+        className="size-11 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
         disabled={isMutating}
         onClick={onDelete}
         aria-label="Eliminar bloqueo"
@@ -367,7 +428,7 @@ function BlockDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Bloquear horario</DialogTitle>
           <DialogDescription>
@@ -387,7 +448,7 @@ function BlockDialog({
             <span className="flex flex-col items-start leading-tight">
               <span className="font-semibold">Todo el día</span>
               <span className="text-xs font-normal text-muted-foreground">
-                Día libre, de una
+                Bloquea la jornada completa
               </span>
             </span>
           </Button>
@@ -427,7 +488,7 @@ function BlockDialog({
                 key={duration.minutes}
                 type="button"
                 variant="outline"
-                className="h-10 flex-1"
+                className="h-11 flex-1"
                 disabled={isPending}
                 onClick={() => applyDuration(duration.minutes)}
               >
@@ -490,15 +551,18 @@ function AppointmentCard({
           </Badge>
         </div>
 
-        <div className="flex items-center justify-between rounded-lg bg-muted px-3 py-2">
-          <span className="text-sm font-medium">{appointment.clients?.name ?? "Cliente"}</span>
+        <div className="flex items-center justify-between gap-2 rounded-lg bg-muted pl-3">
+          <span className="min-w-0 truncate text-sm font-medium">
+            {appointment.clients?.name ?? "Cliente"}
+          </span>
           {appointment.clients?.phone && (
             <a
               href={`tel:${appointment.clients.phone}`}
-              className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+              aria-label={`Llamar a ${appointment.clients.name ?? "el cliente"}`}
+              className="flex h-11 shrink-0 items-center gap-1.5 rounded-r-lg px-3 text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
-              <Phone className="size-3.5" />
-              {appointment.clients.phone}
+              <Phone className="size-4" />
+              <span className="tabular-nums">{appointment.clients.phone}</span>
             </a>
           )}
         </div>
@@ -508,7 +572,7 @@ function AppointmentCard({
             <Button
               onClick={onComplete}
               disabled={isMutating}
-              className="h-11 w-full text-base"
+              className="h-12 w-full text-base"
             >
               Completar
             </Button>
@@ -519,15 +583,15 @@ function AppointmentCard({
                 disabled={isMutating}
                 className="h-11 flex-1"
               >
-                No asistió
+                No vino
               </Button>
               <Button
-                variant="ghost"
+                variant="destructive"
                 onClick={() => onCancel("cancelled")}
                 disabled={isMutating}
-                className="h-11 flex-1 text-destructive hover:bg-destructive/10"
+                className="h-11 flex-1"
               >
-                Cancelar
+                Cancelar turno
               </Button>
             </div>
           </div>
@@ -566,7 +630,7 @@ function CompleteDialog({
         }
       }}
     >
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Completar turno</DialogTitle>
           <DialogDescription>
