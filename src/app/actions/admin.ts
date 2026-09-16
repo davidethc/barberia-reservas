@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { BUSINESS_ID } from "@/lib/constants";
 import { isCurrentUserAdmin } from "@/lib/staff";
 import { serviceRepo } from "@/lib/repositories/services";
 import { barberRepo } from "@/lib/repositories/barbers";
@@ -308,6 +309,7 @@ export type CommissionRow = {
   total_servicios: number | null;
   ingreso_total: number | null;
   comision_total: number | null;
+  business_id: string | null;
 };
 
 export async function getCommissionsReport(
@@ -322,6 +324,8 @@ export async function getCommissionsReport(
   const { data, error } = await supabase
     .from("barber_commissions")
     .select("*")
+    // The view aggregates payments across every shop, so the report has to scope itself.
+    .eq("business_id", BUSINESS_ID)
     .gte("fecha", parsed.data.from)
     .lte("fecha", parsed.data.to)
     .order("fecha", { ascending: false });

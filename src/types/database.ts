@@ -389,6 +389,7 @@ export type Database = {
       barber_commissions: {
         Row: {
           barber_id: string | null
+          business_id: string | null
           comision_total: number | null
           fecha: string | null
           ingreso_total: number | null
@@ -399,9 +400,43 @@ export type Database = {
       }
     }
     Functions: {
+      admin_list_barbers: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          business_id: string
+          commission_pct: number
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          photo_url: string | null
+          pin: string
+          role: string
+          user_id: string | null
+        }[]
+      }
+      create_public_appointment: {
+        Args: {
+          p_barber_id: string
+          p_client_name: string
+          p_client_phone: string
+          p_date: string
+          p_service_id: string
+          p_start_time: string
+        }
+        Returns: string
+      }
       link_barber_account: {
         Args: { p_barber_id: string; p_email: string }
         Returns: string
+      }
+      public_available_slots: {
+        Args: {
+          p_barber_id: string
+          p_date: string
+          p_duration_minutes: number
+        }
+        Returns: string[]
       }
       unlink_barber_account: {
         Args: { p_barber_id: string }

@@ -3,7 +3,6 @@
 import { CreateAppointmentSchema } from "@/lib/schemas/booking";
 import { appointmentRepo } from "@/lib/repositories/appointments";
 import { businessHoursRepo } from "@/lib/repositories/business-hours";
-import { clientRepo } from "@/lib/repositories/clients";
 import { addMinutesToTime } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
 import { BUSINESS_ID } from "@/lib/constants";
@@ -22,6 +21,40 @@ type ActionResult<T> =
   | { success: true; data: T }
   | { success: false; error: string };
 
+/**
+ * The booking function signals each refusal with a token in the raised message, so a
+ * client who lost the slot gets told that instead of one catch-all error.
+ */
+const BOOKING_ERROR_MESSAGES: Record<string, string> = {
+  BOOKING_SLOT_TAKEN: "Este horario ya fue reservado. Elige otro.",
+  BOOKING_SERVICE_NOT_FOUND: "Ese servicio ya no está disponible",
+  BOOKING_BARBER_NOT_FOUND: "Ese barbero ya no está disponible",
+  BOOKING_PAST_DATE: "Esa fecha ya pasó. Elige otra.",
+  BOOKING_TOO_SOON: "Ese horario está por empezar. Elige uno más tarde.",
+  BOOKING_TOO_FAR: "Esa fecha está demasiado lejos. Elige otra.",
+  BOOKING_INVALID_INPUT: "Datos inválidos",
+};
+
+function bookingErrorMessage(error: unknown, fallback: string): string {
+  // PostgrestError is a plain object in some supabase-js builds, so don't assume an Error.
+  const message =
+    typeof error === "object" && error !== null && "message" in error
+      ? String((error as { message: unknown }).message)
+      : "";
+  for (const [token, spanish] of Object.entries(BOOKING_ERROR_MESSAGES)) {
+    if (message.includes(token)) return spanish;
+  }
+  return fallback;
+}
+
+/**
+ * Availability, business hours, lead time and the client record are all resolved inside
+ * `create_public_appointment`. Doing it there rather than here is what lets the anon role
+ * lose its INSERT grant on `appointments` and `clients` — with a direct grant, anyone
+ * holding the publishable key could write rows that skipped every check below. It also
+ * makes the check and the insert one transaction, so two clients racing for the last slot
+ * can no longer both win.
+ */
 export async function createAppointment(
   input: unknown
 ): Promise<ActionResult<{ appointmentId: string }>> {
@@ -34,50 +67,26 @@ export async function createAppointment(
     parsed.data;
 
   const supabase = await createClient();
-  const { data: service } = await supabase
-    .from("services")
-    .select("duration_minutes")
-    .eq("id", serviceId)
-    .single();
-
-  if (!service) {
-    return { success: false, error: "Servicio no encontrado" };
-  }
-
-  const endTime = addMinutesToTime(startTime, service.duration_minutes);
-
-  const slots = await appointmentRepo.getAvailableSlots(
-    barberId,
-    date,
-    service.duration_minutes
+  const { data: appointmentId, error } = await supabase.rpc(
+    "create_public_appointment",
+    {
+      p_service_id: serviceId,
+      p_barber_id: barberId,
+      p_date: date,
+      p_start_time: startTime,
+      p_client_name: clientName,
+      p_client_phone: clientPhone,
+    }
   );
-  if (!slots.includes(startTime)) {
+
+  if (error || !appointmentId) {
     return {
       success: false,
-      error: "Este horario ya fue reservado. Elige otro.",
+      error: bookingErrorMessage(error, "No se pudo crear la reserva. Intenta de nuevo."),
     };
   }
 
-  try {
-    const client = await clientRepo.findOrCreate(clientName, clientPhone);
-
-    const appointment = await appointmentRepo.create({
-      barberId,
-      serviceId,
-      clientId: client.id,
-      date,
-      startTime,
-      endTime,
-      source: "online",
-    });
-
-    return { success: true, data: { appointmentId: appointment.id } };
-  } catch {
-    return {
-      success: false,
-      error: "No se pudo crear la reserva. Intenta de nuevo.",
-    };
-  }
+  return { success: true, data: { appointmentId } };
 }
 
 export async function getBookingData() {

@@ -28,6 +28,9 @@ export async function getRoleByUserId(
   return isAdminRole(data.role) ? "admin" : "barber";
 }
 
+const STAFF_FIELDS =
+  "id, business_id, user_id, name, photo_url, commission_pct, is_active, created_at, role";
+
 export const barberRepo = {
   async getActive() {
     const supabase = await createClient();
@@ -41,26 +44,16 @@ export const barberRepo = {
     return data;
   },
 
-  async getByPin(pin: string) {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("barbers")
-      .select("*")
-      .eq("business_id", BUSINESS_ID)
-      .eq("pin", pin)
-      .eq("is_active", true)
-      .single();
-
-    if (error) return null;
-    return data;
-  },
-
-  /** The barber row linked to a Supabase auth user, used to scope the staff-facing agenda. */
+  /**
+   * `pin` is deliberately absent: the column is no longer granted to the anon or
+   * authenticated roles, so any `select *` on `barbers` is refused outright. Only
+   * `admin_list_barbers()` hands it back, and only to an admin.
+   */
   async getByUserId(userId: string) {
     const supabase = await createClient();
     const { data, error } = await supabase
       .from("barbers")
-      .select("*")
+      .select(STAFF_FIELDS)
       .eq("business_id", BUSINESS_ID)
       .eq("user_id", userId)
       .single();
@@ -69,16 +62,13 @@ export const barberRepo = {
     return data;
   },
 
+  /** Admin-only, and gated inside Postgres rather than here: the PIN travels with these rows. */
   async getAll() {
     const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("barbers")
-      .select("*")
-      .eq("business_id", BUSINESS_ID)
-      .order("name");
+    const { data, error } = await supabase.rpc("admin_list_barbers");
 
     if (error) throw error;
-    return data;
+    return data ?? [];
   },
 
   async create(data: {
@@ -97,7 +87,7 @@ export const barberRepo = {
         pin: data.pin,
         commission_pct: data.commissionPct,
       })
-      .select()
+      .select("id")
       .single();
 
     if (error) throw error;
@@ -118,7 +108,7 @@ export const barberRepo = {
         commission_pct: data.commissionPct,
       })
       .eq("id", id)
-      .select()
+      .select("id")
       .single();
 
     if (error) throw error;
@@ -156,7 +146,7 @@ export const barberRepo = {
       .from("barbers")
       .update({ is_active: isActive })
       .eq("id", id)
-      .select()
+      .select("id")
       .single();
 
     if (error) throw error;
