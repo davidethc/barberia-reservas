@@ -415,6 +415,14 @@ export type Database = {
           user_id: string | null
         }[]
       }
+      complete_appointment: {
+        Args: {
+          p_amount: number
+          p_appointment_id: string
+          p_payment_method: string
+        }
+        Returns: string
+      }
       create_public_appointment: {
         Args: {
           p_barber_id: string
@@ -437,6 +445,14 @@ export type Database = {
           p_duration_minutes: number
         }
         Returns: string[]
+      }
+      public_bookable_barbers: {
+        Args: { p_business_id: string }
+        Returns: {
+          id: string
+          name: string
+          photo_url: string | null
+        }[]
       }
       unlink_barber_account: {
         Args: { p_barber_id: string }

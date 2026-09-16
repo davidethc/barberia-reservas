@@ -32,16 +32,19 @@ const STAFF_FIELDS =
   "id, business_id, user_id, name, photo_url, commission_pct, is_active, created_at, role";
 
 export const barberRepo = {
-  async getActive() {
+  /**
+   * The barbers the public wizard may offer. Resolved inside Postgres because the test is
+   * "active *and* linked to an account" and the anon role is not granted `user_id` — an
+   * unlinked barber has no agenda, so a turn booked with one is invisible to the whole shop.
+   */
+  async getBookable() {
     const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("barbers")
-      .select("id, name, photo_url")
-      .eq("business_id", BUSINESS_ID)
-      .eq("is_active", true);
+    const { data, error } = await supabase.rpc("public_bookable_barbers", {
+      p_business_id: BUSINESS_ID,
+    });
 
     if (error) throw error;
-    return data;
+    return data ?? [];
   },
 
   /**

@@ -2,6 +2,7 @@
 
 import { CreateAppointmentSchema } from "@/lib/schemas/booking";
 import { appointmentRepo } from "@/lib/repositories/appointments";
+import { barberRepo } from "@/lib/repositories/barbers";
 import { businessHoursRepo } from "@/lib/repositories/business-hours";
 import { addMinutesToTime } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
@@ -29,6 +30,7 @@ const BOOKING_ERROR_MESSAGES: Record<string, string> = {
   BOOKING_SLOT_TAKEN: "Este horario ya fue reservado. Elige otro.",
   BOOKING_SERVICE_NOT_FOUND: "Ese servicio ya no está disponible",
   BOOKING_BARBER_NOT_FOUND: "Ese barbero ya no está disponible",
+  BOOKING_BARBER_NOT_BOOKABLE: "Ese barbero no está recibiendo reservas. Elige otro.",
   BOOKING_PAST_DATE: "Esa fecha ya pasó. Elige otra.",
   BOOKING_TOO_SOON: "Ese horario está por empezar. Elige uno más tarde.",
   BOOKING_TOO_FAR: "Esa fecha está demasiado lejos. Elige otra.",
@@ -92,7 +94,7 @@ export async function createAppointment(
 export async function getBookingData() {
   const supabase = await createClient();
 
-  const [{ data: services }, { data: barbers }, { data: business }, openDays] =
+  const [{ data: services }, barbers, { data: business }, openDays] =
     await Promise.all([
       supabase
         .from("services")
@@ -100,11 +102,10 @@ export async function getBookingData() {
         .eq("business_id", BUSINESS_ID)
         .eq("is_active", true)
         .order("sort_order"),
-      supabase
-        .from("barbers")
-        .select("id, name, photo_url")
-        .eq("business_id", BUSINESS_ID)
-        .eq("is_active", true),
+      // Only barbers with an account: /agenda shows the signed-in barber's own day and
+      // nothing else, so a turn booked with an unlinked barber is one nobody can ever open.
+      // The filter has to happen in Postgres — `user_id` is not granted to the anon role.
+      barberRepo.getBookable().catch(() => []),
       supabase
         .from("businesses")
         .select("name, phone, address")
@@ -115,7 +116,7 @@ export async function getBookingData() {
 
   return {
     services: services ?? [],
-    barbers: barbers ?? [],
+    barbers,
     business: business ?? { name: "", phone: "", address: "" },
     openDays,
     // Resolved on the shop's clock here rather than in the browser, so the

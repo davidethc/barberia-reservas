@@ -62,6 +62,37 @@ export async function getAgendaForDate(date: string): Promise<ActionResult<Agend
   }
 }
 
+/**
+ * `complete_appointment` signals each refusal with a token in the raised message, so the
+ * barber gets the same wording the two-step version produced instead of one catch-all error.
+ */
+const COMPLETE_ERROR_MESSAGES: Record<string, string> = {
+  COMPLETE_NOT_STAFF: "No se encontró un barbero asociado a tu cuenta",
+  // Someone else's turn is indistinguishable from a turn that is gone, by design.
+  COMPLETE_NOT_FOUND: "Turno no encontrado",
+  COMPLETE_NOT_PENDING: "Este turno ya no se puede completar",
+  COMPLETE_INVALID_INPUT: "Datos inválidos",
+};
+
+function completeErrorMessage(error: unknown, fallback: string): string {
+  // PostgrestError is a plain object in some supabase-js builds, so don't assume an Error.
+  const message =
+    typeof error === "object" && error !== null && "message" in error
+      ? String((error as { message: unknown }).message)
+      : "";
+  for (const [token, spanish] of Object.entries(COMPLETE_ERROR_MESSAGES)) {
+    if (message.includes(token)) return spanish;
+  }
+  return fallback;
+}
+
+/**
+ * Ownership, the state transition, the payment and the commission are all settled inside
+ * `complete_appointment`. Doing it there rather than here is what makes the status change
+ * and the payment one transaction: the old status-then-insert pair could leave a payment on
+ * a turn it had just reverted to pending, and the retry then hit the UNIQUE on
+ * `appointment_id` forever.
+ */
 export async function completeAppointment(
   input: unknown
 ): Promise<ActionResult<{ appointmentId: string }>> {
@@ -70,52 +101,17 @@ export async function completeAppointment(
     return { success: false, error: "Datos inválidos" };
   }
 
-  const barber = await getCurrentBarber();
-  if (!barber) {
-    return { success: false, error: "No se encontró un barbero asociado a tu cuenta" };
-  }
-
   const { appointmentId, paymentMethod, amount } = parsed.data;
-  const supabase = await createClient();
-
-  // RLS does not scope appointments by barber, so the ownership check happens here.
-  const { data: appointment, error: fetchError } = await supabase
-    .from("appointments")
-    .select("id, status")
-    .eq("id", appointmentId)
-    .eq("barber_id", barber.id)
-    .single();
-
-  if (fetchError || !appointment) {
-    return { success: false, error: "Turno no encontrado" };
-  }
-
-  if (!canTransition(appointment.status as AppointmentStatus, "completed")) {
-    return { success: false, error: "Este turno ya no se puede completar" };
-  }
 
   try {
-    await appointmentRepo.updateStatusForBarber(appointmentId, barber.id, "completed");
-
-    try {
-      await paymentRepo.create({
-        appointmentId,
-        barberId: barber.id,
-        amount,
-        paymentMethod,
-        commissionPct: barber.commission_pct,
-      });
-    } catch (paymentError) {
-      // Best-effort compensation: don't leave the appointment marked completed
-      // with no payment on record.
-      await appointmentRepo.updateStatusForBarber(appointmentId, barber.id, "pending");
-      throw paymentError;
-    }
-
+    await paymentRepo.completeAppointment({ appointmentId, paymentMethod, amount });
     revalidatePath("/agenda");
     return { success: true, data: { appointmentId } };
-  } catch {
-    return { success: false, error: "No se pudo completar el turno. Intenta de nuevo." };
+  } catch (error) {
+    return {
+      success: false,
+      error: completeErrorMessage(error, "No se pudo completar el turno. Intenta de nuevo."),
+    };
   }
 }
 
