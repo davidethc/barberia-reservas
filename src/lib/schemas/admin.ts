@@ -33,6 +33,15 @@ export const UpdateBarberSchema = BarberInputSchema.extend({
   id: z.string().uuid(),
 });
 
+export const LinkBarberAccountSchema = z.object({
+  barberId: z.string().uuid(),
+  email: z.string().trim().email("Correo inválido").max(255),
+});
+
+export const UnlinkBarberAccountSchema = z.object({
+  barberId: z.string().uuid(),
+});
+
 export const BusinessHoursInputSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
   openTime: z.string().regex(/^\d{2}:\d{2}$/),
@@ -49,5 +58,6 @@ export type ServiceInput = z.infer<typeof ServiceInputSchema>;
 export type UpdateServiceInput = z.infer<typeof UpdateServiceSchema>;
 export type BarberInput = z.infer<typeof BarberInputSchema>;
 export type UpdateBarberInput = z.infer<typeof UpdateBarberSchema>;
+export type LinkBarberAccountInput = z.infer<typeof LinkBarberAccountSchema>;
 export type BusinessHoursInput = z.infer<typeof BusinessHoursInputSchema>;
 export type CommissionsReportRange = z.infer<typeof CommissionsReportRangeSchema>;

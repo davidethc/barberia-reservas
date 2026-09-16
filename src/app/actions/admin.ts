@@ -15,6 +15,8 @@ import {
   ToggleActiveSchema,
   CreateBarberSchema,
   UpdateBarberSchema,
+  LinkBarberAccountSchema,
+  UnlinkBarberAccountSchema,
   BusinessHoursInputSchema,
   CommissionsReportRangeSchema,
 } from "@/lib/schemas/admin";
@@ -147,6 +149,67 @@ export async function toggleBarberActive(input: unknown): Promise<ActionResult<{
     return { success: true, data: { id: parsed.data.id } };
   } catch {
     return { success: false, error: "No se pudo actualizar el barbero" };
+  }
+}
+
+// ---------- Barber account linking ----------
+
+/**
+ * The linking functions signal each failure with a token in the raised message, so the panel
+ * can tell "no existe la cuenta" apart from "ya está vinculada" instead of showing one
+ * catch-all error.
+ */
+const LINK_ERROR_MESSAGES: Record<string, string> = {
+  BARBER_LINK_NOT_ADMIN: "No autorizado",
+  BARBER_LINK_USER_NOT_FOUND: "No existe una cuenta con ese correo",
+  BARBER_LINK_ALREADY_LINKED: "Esa cuenta ya está vinculada a otro barbero",
+  BARBER_LINK_BARBER_NOT_FOUND: "El barbero ya no existe",
+  BARBER_UNLINK_NOT_ADMIN: "No autorizado",
+  BARBER_UNLINK_SELF: "No podés desvincular tu propia cuenta",
+  BARBER_UNLINK_BARBER_NOT_FOUND: "El barbero ya no existe",
+};
+
+function linkErrorMessage(error: unknown, fallback: string): string {
+  // PostgrestError is a plain object in some supabase-js builds, so don't assume an Error.
+  const message =
+    typeof error === "object" && error !== null && "message" in error
+      ? String((error as { message: unknown }).message)
+      : "";
+  for (const [token, spanish] of Object.entries(LINK_ERROR_MESSAGES)) {
+    if (message.includes(token)) return spanish;
+  }
+  return fallback;
+}
+
+export async function linkBarberAccount(
+  input: unknown
+): Promise<ActionResult<{ id: string; userId: string }>> {
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
+
+  const parsed = LinkBarberAccountSchema.safeParse(input);
+  if (!parsed.success) return { success: false, error: "Correo inválido" };
+
+  try {
+    const userId = await barberRepo.linkAccount(parsed.data.barberId, parsed.data.email);
+    revalidatePath("/admin");
+    return { success: true, data: { id: parsed.data.barberId, userId } };
+  } catch (error) {
+    return { success: false, error: linkErrorMessage(error, "No se pudo vincular la cuenta") };
+  }
+}
+
+export async function unlinkBarberAccount(input: unknown): Promise<ActionResult<{ id: string }>> {
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
+
+  const parsed = UnlinkBarberAccountSchema.safeParse(input);
+  if (!parsed.success) return { success: false, error: "Datos inválidos" };
+
+  try {
+    await barberRepo.unlinkAccount(parsed.data.barberId);
+    revalidatePath("/admin");
+    return { success: true, data: { id: parsed.data.barberId } };
+  } catch (error) {
+    return { success: false, error: linkErrorMessage(error, "No se pudo desvincular la cuenta") };
   }
 }
 

@@ -125,6 +125,31 @@ export const barberRepo = {
     return barber;
   },
 
+  /**
+   * Both linking calls go through SECURITY DEFINER functions: auth.users is not readable by
+   * the anon/authenticated client, so the email lookup has to happen inside Postgres. The
+   * raised error is passed through untouched for the action layer to map to a message.
+   */
+  async linkAccount(barberId: string, email: string) {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("link_barber_account", {
+      p_barber_id: barberId,
+      p_email: email,
+    });
+
+    if (error) throw error;
+    return data;
+  },
+
+  async unlinkAccount(barberId: string) {
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("unlink_barber_account", {
+      p_barber_id: barberId,
+    });
+
+    if (error) throw error;
+  },
+
   async setActive(id: string, isActive: boolean) {
     const supabase = await createClient();
     const { data, error } = await supabase

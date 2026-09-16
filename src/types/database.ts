@@ -399,7 +399,14 @@ export type Database = {
       }
     }
     Functions: {
-      [_ in never]: never
+      link_barber_account: {
+        Args: { p_barber_id: string; p_email: string }
+        Returns: string
+      }
+      unlink_barber_account: {
+        Args: { p_barber_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
