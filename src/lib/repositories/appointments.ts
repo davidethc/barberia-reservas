@@ -128,6 +128,32 @@ export const appointmentRepo = {
   },
 
   /**
+   * Active appointments a time range would cover. Half-open overlap (`start < rangeEnd`
+   * and `end > rangeStart`) so a turn ending exactly when the range starts is not a
+   * conflict. Used to stop a block from hiding a client who is actually coming.
+   */
+  async getActiveOverlapping(
+    barberId: string,
+    date: string,
+    startTime: string,
+    endTime: string
+  ) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("id, start_time, end_time, clients(name)")
+      .eq("barber_id", barberId)
+      .eq("date", date)
+      .not("status", "in", '("cancelled","no_show")')
+      .lt("start_time", endTime)
+      .gt("end_time", startTime)
+      .order("start_time");
+
+    if (error) throw error;
+    return data;
+  },
+
+  /**
    * Same as `updateStatus`, but additionally scoped to `barberId` — since
    * RLS lets any authenticated user update any appointment, this filter is
    * what prevents a barber from mutating another barber's appointment.

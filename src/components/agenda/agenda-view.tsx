@@ -3,10 +3,14 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
-  getAppointmentsForDate,
+  getAgendaForDate,
   completeAppointment,
   cancelAppointment,
+  createBlock,
+  deleteBlock,
   type AgendaAppointment,
+  type AgendaBlock,
+  type AgendaDay,
 } from "@/app/actions/agenda";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,8 +25,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatDate, formatPrice, formatTime, cn } from "@/lib/utils";
-import { ChevronLeft, ChevronRight, Phone } from "lucide-react";
+import { FULL_DAY_START, FULL_DAY_END } from "@/lib/constants";
+import { addMinutesToTime, formatDate, formatPrice, formatTime, cn } from "@/lib/utils";
+import { Ban, CalendarOff, ChevronLeft, ChevronRight, Phone, Trash2 } from "lucide-react";
 
 function todayStr(): string {
   return new Date().toISOString().split("T")[0]!;
@@ -48,28 +53,63 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   no_show: "destructive",
 };
 
+/** Postgres hands back `HH:MM:SS`; the constants are `HH:MM`, so compare on the same shape. */
+function isFullDay(block: AgendaBlock): boolean {
+  return (
+    block.start_time.slice(0, 5) <= FULL_DAY_START && block.end_time.slice(0, 5) >= FULL_DAY_END
+  );
+}
+
+function clampToDay(time: string): string {
+  return time > FULL_DAY_END ? FULL_DAY_END : time;
+}
+
+type TimelineItem =
+  | { kind: "appointment"; id: string; at: string; appointment: AgendaAppointment }
+  | { kind: "block"; id: string; at: string; block: AgendaBlock };
+
+function buildTimeline(day: AgendaDay): TimelineItem[] {
+  const items: TimelineItem[] = [
+    ...day.appointments.map<TimelineItem>((a) => ({
+      kind: "appointment",
+      id: a.id,
+      at: a.start_time,
+      appointment: a,
+    })),
+    ...day.blocks.map<TimelineItem>((b) => ({
+      kind: "block",
+      id: b.id,
+      at: b.start_time,
+      block: b,
+    })),
+  ];
+
+  return items.sort((a, b) => a.at.localeCompare(b.at));
+}
+
 export function AgendaView({
   initialDate,
-  initialAppointments,
+  initialDay,
 }: {
   initialDate: string;
-  initialAppointments: AgendaAppointment[];
+  initialDay: AgendaDay;
 }) {
   const [date, setDate] = useState(initialDate);
-  const [appointments, setAppointments] = useState(initialAppointments);
+  const [day, setDay] = useState(initialDay);
   const [isLoading, startLoading] = useTransition();
   const [isMutating, startMutating] = useTransition();
   const [completingId, setCompletingId] = useState<string | null>(null);
+  const [isBlockDialogOpen, setIsBlockDialogOpen] = useState(false);
 
   function loadDate(nextDate: string) {
     setDate(nextDate);
     startLoading(async () => {
-      const result = await getAppointmentsForDate(nextDate);
+      const result = await getAgendaForDate(nextDate);
       if (result.success) {
-        setAppointments(result.data);
+        setDay(result.data);
       } else {
         toast.error(result.error);
-        setAppointments([]);
+        setDay({ appointments: [], blocks: [] });
       }
     });
   }
@@ -79,9 +119,12 @@ export function AgendaView({
       const result = await cancelAppointment({ appointmentId: id, reason });
       if (result.success) {
         toast.success(reason === "cancelled" ? "Turno cancelado" : "Marcado como no asistió");
-        setAppointments((prev) =>
-          prev.map((a) => (a.id === id ? { ...a, status: reason } : a))
-        );
+        setDay((prev) => ({
+          ...prev,
+          appointments: prev.appointments.map((a) =>
+            a.id === id ? { ...a, status: reason } : a
+          ),
+        }));
       } else {
         toast.error(result.error);
       }
@@ -93,9 +136,12 @@ export function AgendaView({
       const result = await completeAppointment({ appointmentId: id, paymentMethod, amount });
       if (result.success) {
         toast.success("Turno completado");
-        setAppointments((prev) =>
-          prev.map((a) => (a.id === id ? { ...a, status: "completed" } : a))
-        );
+        setDay((prev) => ({
+          ...prev,
+          appointments: prev.appointments.map((a) =>
+            a.id === id ? { ...a, status: "completed" } : a
+          ),
+        }));
         setCompletingId(null);
       } else {
         toast.error(result.error);
@@ -103,12 +149,40 @@ export function AgendaView({
     });
   }
 
-  const completingAppointment = appointments.find((a) => a.id === completingId) ?? null;
+  function handleCreateBlock(startTime: string, endTime: string) {
+    startMutating(async () => {
+      const result = await createBlock({ date, startTime, endTime });
+      if (result.success) {
+        const block = result.data;
+        toast.success(isFullDay(block) ? "Día bloqueado" : "Horario bloqueado");
+        setDay((prev) => ({ ...prev, blocks: [...prev.blocks, block] }));
+        setIsBlockDialogOpen(false);
+      } else {
+        toast.error(result.error);
+      }
+    });
+  }
+
+  function handleDeleteBlock(id: string) {
+    startMutating(async () => {
+      const result = await deleteBlock({ blockId: id });
+      if (result.success) {
+        toast.success("Bloqueo eliminado");
+        setDay((prev) => ({ ...prev, blocks: prev.blocks.filter((b) => b.id !== id) }));
+      } else {
+        toast.error(result.error);
+      }
+    });
+  }
+
+  const completingAppointment = day.appointments.find((a) => a.id === completingId) ?? null;
   const isToday = date === todayStr();
+  const timeline = buildTimeline(day);
+  const blockCount = day.blocks.length;
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <div className="mb-6 flex items-center justify-between gap-2">
+      <div className="mb-4 flex items-center justify-between gap-2">
         <Button
           variant="outline"
           size="icon-lg"
@@ -135,30 +209,58 @@ export function AgendaView({
         </Button>
       </div>
 
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          {blockCount === 0
+            ? "No tenés bloqueos este día"
+            : blockCount === 1
+              ? "1 bloqueo este día"
+              : `${blockCount} bloqueos este día`}
+        </p>
+        <Button
+          variant="outline"
+          className="h-11 w-full gap-2 sm:w-auto"
+          disabled={isLoading}
+          onClick={() => setIsBlockDialogOpen(true)}
+        >
+          <Ban className="size-4" />
+          Bloquear horario
+        </Button>
+      </div>
+
       {isLoading ? (
         <div className="space-y-3">
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-28 animate-pulse rounded-xl bg-muted" />
           ))}
         </div>
-      ) : appointments.length === 0 ? (
+      ) : timeline.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16 text-center">
           <p className="text-sm font-medium text-foreground">No hay turnos este día</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Disfruta el descanso, o revisa otro día.
+            Disfrutá el descanso, o revisá otro día.
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {appointments.map((a) => (
-            <AppointmentCard
-              key={a.id}
-              appointment={a}
-              isMutating={isMutating}
-              onComplete={() => setCompletingId(a.id)}
-              onCancel={(reason) => handleCancel(a.id, reason)}
-            />
-          ))}
+          {timeline.map((item) =>
+            item.kind === "appointment" ? (
+              <AppointmentCard
+                key={item.id}
+                appointment={item.appointment}
+                isMutating={isMutating}
+                onComplete={() => setCompletingId(item.id)}
+                onCancel={(reason) => handleCancel(item.id, reason)}
+              />
+            ) : (
+              <BlockCard
+                key={item.id}
+                block={item.block}
+                isMutating={isMutating}
+                onDelete={() => handleDeleteBlock(item.id)}
+              />
+            )
+          )}
         </div>
       )}
 
@@ -168,7 +270,190 @@ export function AgendaView({
         onOpenChange={(open) => !open && setCompletingId(null)}
         onConfirm={handleCompleted}
       />
+
+      <BlockDialog
+        key={date}
+        date={date}
+        open={isBlockDialogOpen}
+        isPending={isMutating}
+        onOpenChange={setIsBlockDialogOpen}
+        onConfirm={handleCreateBlock}
+      />
     </div>
+  );
+}
+
+function BlockCard({
+  block,
+  isMutating,
+  onDelete,
+}: {
+  block: AgendaBlock;
+  isMutating: boolean;
+  onDelete: () => void;
+}) {
+  const fullDay = isFullDay(block);
+
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-dashed border-border bg-muted/40 px-4 py-3">
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        {fullDay ? <CalendarOff className="size-5" /> : <Ban className="size-5" />}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="font-semibold tabular-nums">
+          {fullDay
+            ? "Todo el día"
+            : `${formatTime(block.start_time)} – ${formatTime(block.end_time)}`}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Bloqueado · nadie puede reservar este horario
+        </div>
+      </div>
+
+      <Button
+        variant="ghost"
+        size="icon-lg"
+        className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+        disabled={isMutating}
+        onClick={onDelete}
+        aria-label="Eliminar bloqueo"
+      >
+        <Trash2 className="size-5" />
+      </Button>
+    </div>
+  );
+}
+
+function defaultStartTime(date: string): string {
+  if (date !== todayStr()) return "09:00";
+
+  const now = new Date();
+  const rounded = Math.ceil((now.getHours() * 60 + now.getMinutes()) / 30) * 30;
+  if (rounded >= 23 * 60) return "23:00";
+  return addMinutesToTime("00:00", rounded);
+}
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const QUICK_DURATIONS = [
+  { label: "30 min", minutes: 30 },
+  { label: "1 h", minutes: 60 },
+  { label: "2 h", minutes: 120 },
+] as const;
+
+function BlockDialog({
+  date,
+  open,
+  isPending,
+  onOpenChange,
+  onConfirm,
+}: {
+  date: string;
+  open: boolean;
+  isPending: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (startTime: string, endTime: string) => void;
+}) {
+  const initialStart = defaultStartTime(date);
+  const [startTime, setStartTime] = useState(initialStart);
+  const [endTime, setEndTime] = useState(clampToDay(addMinutesToTime(initialStart, 60)));
+
+  const isValid = TIME_PATTERN.test(startTime) && TIME_PATTERN.test(endTime) && endTime > startTime;
+
+  function applyDuration(minutes: number) {
+    setEndTime(clampToDay(addMinutesToTime(startTime, minutes)));
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Bloquear horario</DialogTitle>
+          <DialogDescription>
+            Nadie va a poder reservar en ese rango · {formatDate(date)}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-14 w-full justify-start gap-3 text-base"
+            disabled={isPending}
+            onClick={() => onConfirm(FULL_DAY_START, FULL_DAY_END)}
+          >
+            <CalendarOff className="size-5" />
+            <span className="flex flex-col items-start leading-tight">
+              <span className="font-semibold">Todo el día</span>
+              <span className="text-xs font-normal text-muted-foreground">
+                Día libre, de una
+              </span>
+            </span>
+          </Button>
+
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs text-muted-foreground">o un rango</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1.5">
+              <Label htmlFor="block-start">Desde</Label>
+              <Input
+                id="block-start"
+                type="time"
+                className="h-11 w-full"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+              />
+            </div>
+            <div className="flex-1 space-y-1.5">
+              <Label htmlFor="block-end">Hasta</Label>
+              <Input
+                id="block-end"
+                type="time"
+                className="h-11 w-full"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            {QUICK_DURATIONS.map((duration) => (
+              <Button
+                key={duration.minutes}
+                type="button"
+                variant="outline"
+                className="h-10 flex-1"
+                disabled={isPending}
+                onClick={() => applyDuration(duration.minutes)}
+              >
+                {duration.label}
+              </Button>
+            ))}
+          </div>
+
+          {!isValid && (
+            <p className="text-xs text-destructive">
+              La hora de fin tiene que ser posterior a la de inicio.
+            </p>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button
+            className="h-11 w-full text-base"
+            disabled={!isValid || isPending}
+            onClick={() => onConfirm(startTime, endTime)}
+          >
+            {isPending ? "Guardando..." : "Bloquear"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -4,9 +4,12 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentBarber } from "@/lib/staff";
 import { appointmentRepo } from "@/lib/repositories/appointments";
+import { barberScheduleRepo } from "@/lib/repositories/barber-schedules";
 import { paymentRepo } from "@/lib/repositories/payments";
 import { CompleteAppointmentSchema, CancelAppointmentSchema } from "@/lib/schemas/booking";
+import { CreateBlockSchema, DeleteBlockSchema } from "@/lib/schemas/schedule";
 import { canTransition, type ActionResult, type AppointmentStatus } from "@/lib/appointment-states";
+import { formatTime } from "@/lib/utils";
 
 export type AgendaAppointment = {
   id: string;
@@ -20,22 +23,42 @@ export type AgendaAppointment = {
   clients: { name: string; phone: string } | null;
 };
 
-export async function getAppointmentsForDate(
-  date: string
-): Promise<ActionResult<AgendaAppointment[]>> {
+export type AgendaBlock = {
+  id: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+};
+
+export type AgendaDay = {
+  appointments: AgendaAppointment[];
+  blocks: AgendaBlock[];
+};
+
+export async function getAgendaForDate(date: string): Promise<ActionResult<AgendaDay>> {
   const barber = await getCurrentBarber();
   if (!barber) {
     return {
       success: false,
-      error: "No se encontró un barbero asociado a tu cuenta. Contacta al administrador.",
+      error: "No se encontró un barbero asociado a tu cuenta. Contactá al administrador.",
     };
   }
 
   try {
-    const appointments = await appointmentRepo.getForAgenda(barber.id, date);
-    return { success: true, data: appointments as unknown as AgendaAppointment[] };
+    const [appointments, blocks] = await Promise.all([
+      appointmentRepo.getForAgenda(barber.id, date),
+      barberScheduleRepo.getBlocksForDate(barber.id, date),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        appointments: appointments as unknown as AgendaAppointment[],
+        blocks: blocks as AgendaBlock[],
+      },
+    };
   } catch {
-    return { success: false, error: "No se pudieron cargar los turnos" };
+    return { success: false, error: "No se pudo cargar la agenda" };
   }
 }
 
@@ -134,4 +157,83 @@ export async function cancelAppointment(
   } catch {
     return { success: false, error: "No se pudo actualizar el turno. Intenta de nuevo." };
   }
+}
+
+export async function createBlock(input: unknown): Promise<ActionResult<AgendaBlock>> {
+  const parsed = CreateBlockSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  const barber = await getCurrentBarber();
+  if (!barber) {
+    return { success: false, error: "No se encontró un barbero asociado a tu cuenta" };
+  }
+
+  const { date, startTime, endTime } = parsed.data;
+
+  try {
+    // A block that silently covered a booked turn would hide a client who is coming.
+    const conflicts = await appointmentRepo.getActiveOverlapping(
+      barber.id,
+      date,
+      startTime,
+      endTime
+    );
+
+    if (conflicts.length > 0) {
+      return { success: false, error: describeConflicts(conflicts) };
+    }
+
+    const block = await barberScheduleRepo.createBlock({
+      barberId: barber.id,
+      date,
+      startTime,
+      endTime,
+    });
+
+    revalidatePath("/agenda");
+    return { success: true, data: block as AgendaBlock };
+  } catch {
+    return { success: false, error: "No se pudo crear el bloqueo. Intentá de nuevo." };
+  }
+}
+
+export async function deleteBlock(input: unknown): Promise<ActionResult<{ blockId: string }>> {
+  const parsed = DeleteBlockSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: "Datos inválidos" };
+  }
+
+  const barber = await getCurrentBarber();
+  if (!barber) {
+    return { success: false, error: "No se encontró un barbero asociado a tu cuenta" };
+  }
+
+  const { blockId } = parsed.data;
+
+  try {
+    const deleted = await barberScheduleRepo.deleteBlockForBarber(blockId, barber.id);
+    if (!deleted) {
+      return { success: false, error: "Ese bloqueo ya no existe" };
+    }
+
+    revalidatePath("/agenda");
+    return { success: true, data: { blockId } };
+  } catch {
+    return { success: false, error: "No se pudo eliminar el bloqueo. Intentá de nuevo." };
+  }
+}
+
+function describeConflicts(
+  conflicts: { start_time: string; clients: { name: string } | null }[]
+): string {
+  const first = conflicts[0];
+  if (conflicts.length === 1 && first) {
+    const who = first.clients?.name ?? "un cliente";
+    return `Ya tenés un turno con ${who} a las ${formatTime(first.start_time)}. Cancelalo antes de bloquear ese horario.`;
+  }
+
+  const times = conflicts.map((c) => formatTime(c.start_time)).join(", ");
+  return `Ya tenés ${conflicts.length} turnos en ese rango (${times}). Cancelalos antes de bloquear ese horario.`;
 }
