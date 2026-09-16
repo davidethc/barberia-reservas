@@ -28,17 +28,15 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/staff/confirm-dialog";
 import { FULL_DAY_START, FULL_DAY_END } from "@/lib/constants";
+import { shopToday as todayStr } from "@/lib/shop-date";
 import { addMinutesToTime, formatDate, formatPrice, formatTime, cn } from "@/lib/utils";
 import { Ban, CalendarOff, ChevronLeft, ChevronRight, Phone, Trash2 } from "lucide-react";
 
-function todayStr(): string {
-  return new Date().toISOString().split("T")[0]!;
-}
-
 function shiftDate(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T12:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split("T")[0]!;
+  // Anchored at UTC noon so the arithmetic never crosses a day boundary.
+  const d = new Date(dateStr + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 const STATUS_LABEL: Record<string, string> = {

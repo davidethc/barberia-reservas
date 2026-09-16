@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { formatPrice, formatTime, buildWhatsAppLink } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { downloadCalendarEvent } from "./calendar";
-import { formatLongDate } from "./date-helpers";
+import { formatLongDate } from "@/lib/shop-date";
 import type { Business, ConfirmedBooking } from "./types";
 
 export function ConfirmationView({

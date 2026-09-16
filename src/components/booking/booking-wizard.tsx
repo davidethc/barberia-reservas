@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmationView } from "./confirmation-view";
 import { StepProgress } from "./step-progress";
-import { formatDayNumber, formatWeekdayShort, getDayOfWeek } from "./date-helpers";
+import { formatDayNumber, formatWeekdayShort, getDayOfWeek } from "@/lib/shop-date";
 import { isConfirmedBooking, type Barber, type Business, type ConfirmedBooking, type Service } from "./types";
 
 type Props = {

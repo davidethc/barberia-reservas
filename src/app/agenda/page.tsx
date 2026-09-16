@@ -2,15 +2,12 @@ import { getAgendaForDate } from "@/app/actions/agenda";
 import { AgendaView } from "@/components/agenda/agenda-view";
 import { StaffHeader } from "@/components/staff/staff-header";
 import { getCurrentBarber, isCurrentUserAdmin } from "@/lib/staff";
+import { shopToday } from "@/lib/shop-date";
 import { Card, CardContent } from "@/components/ui/card";
 import { TriangleAlert } from "lucide-react";
 
-function todayStr(): string {
-  return new Date().toISOString().split("T")[0]!;
-}
-
 export default async function AgendaPage() {
-  const date = todayStr();
+  const date = shopToday();
   const [barber, isAdmin] = await Promise.all([getCurrentBarber(), isCurrentUserAdmin()]);
 
   // A session with no barber row cannot have an agenda at all: say so instead of failing

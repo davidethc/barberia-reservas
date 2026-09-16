@@ -11,17 +11,6 @@ export function formatDate(dateStr: string): string {
   return `${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`;
 }
 
-export function getNextDays(count: number): string[] {
-  const days: string[] = [];
-  const today = new Date();
-  for (let i = 0; i < count; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() + i);
-    days.push(d.toISOString().split("T")[0]!);
-  }
-  return days;
-}
-
 export function addMinutesToTime(time: string, minutes: number): string {
   const [h, m] = time.split(":").map(Number);
   const total = (h ?? 0) * 60 + (m ?? 0) + minutes;

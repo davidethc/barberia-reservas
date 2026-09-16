@@ -11,7 +11,7 @@ import {
   getShopDates,
   shopNowTime,
   shopToday,
-} from "@/components/booking/date-helpers";
+} from "@/lib/shop-date";
 
 /** Minimum notice for a same-day turn, so nobody books a slot already passing. */
 const LEAD_MINUTES = 15;
