@@ -8,7 +8,7 @@ import { signOut } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export function StaffHeader({ title, isAdmin = false }: { title: string; isAdmin?: boolean }) {
+export function StaffHeader({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -29,7 +29,6 @@ export function StaffHeader({ title, isAdmin = false }: { title: string; isAdmin
     <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80">
       <div className="mx-auto flex h-14 max-w-3xl items-center justify-between gap-2 px-4">
         <div className="flex min-w-0 items-center gap-2 sm:gap-4">
-          <span className="hidden text-sm font-semibold sm:inline">{title}</span>
           <nav className="flex items-center gap-1">
             <Link
               href="/agenda"

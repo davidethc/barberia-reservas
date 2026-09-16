@@ -15,7 +15,7 @@ export default async function AgendaPage() {
   if (!barber) {
     return (
       <div className="min-h-screen bg-background">
-        <StaffHeader title="Agenda" isAdmin={isAdmin} />
+        <StaffHeader isAdmin={isAdmin} />
         <AgendaMessage
           title="Tu cuenta todavía no está vinculada"
           body="Tu usuario existe, pero no está asociado a ningún barbero, así que no hay agenda que mostrar. Pídele al administrador que vincule tu correo desde el panel de Barberos y vuelve a entrar."
@@ -28,9 +28,9 @@ export default async function AgendaPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <StaffHeader title="Agenda" isAdmin={isAdmin} />
+      <StaffHeader isAdmin={isAdmin} />
       {result.success ? (
-        <AgendaView initialDate={date} initialDay={result.data} />
+        <AgendaView initialDate={date} initialDay={result.data} barberId={barber.id} />
       ) : (
         <AgendaMessage
           title={result.error}

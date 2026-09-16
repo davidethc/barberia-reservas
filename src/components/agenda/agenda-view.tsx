@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   getAgendaForDate,
@@ -12,6 +12,7 @@ import {
   type AgendaBlock,
   type AgendaDay,
 } from "@/app/actions/agenda";
+import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -96,12 +97,15 @@ function buildTimeline(day: AgendaDay): TimelineItem[] {
 export function AgendaView({
   initialDate,
   initialDay,
+  barberId,
 }: {
   initialDate: string;
   initialDay: AgendaDay;
+  barberId: string;
 }) {
   const [date, setDate] = useState(initialDate);
   const [day, setDay] = useState(initialDay);
+  const dateRef = useRef(date);
   const [isLoading, startLoading] = useTransition();
   const [isMutating, startMutating] = useTransition();
   const [completingId, setCompletingId] = useState<string | null>(null);
@@ -114,6 +118,7 @@ export function AgendaView({
 
   function loadDate(nextDate: string) {
     setDate(nextDate);
+    dateRef.current = nextDate;
     startLoading(async () => {
       const result = await getAgendaForDate(nextDate);
       if (result.success) {
@@ -124,6 +129,69 @@ export function AgendaView({
       }
     });
   }
+
+  // Same fetch as loadDate, but without the skeleton flash — used when a realtime
+  // event says the day on screen changed instead of when the barber navigates.
+  function refreshQuietly(forDate: string) {
+    getAgendaForDate(forDate).then((result) => {
+      if (result.success && dateRef.current === forDate) {
+        setDay(result.data);
+      }
+    });
+  }
+
+  // A client booking, another device completing a turn, or a block created elsewhere
+  // must show up here without the barber having to reload the page.
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`agenda-${barberId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "appointments",
+          filter: `barber_id=eq.${barberId}`,
+        },
+        (payload) => {
+          const row = payload.new as { date: string; start_time: string };
+          if (row.date !== dateRef.current) return;
+          toast.info(`Nuevo turno reservado a las ${formatTime(row.start_time)}`);
+          refreshQuietly(row.date);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "appointments",
+          filter: `barber_id=eq.${barberId}`,
+        },
+        (payload) => {
+          const row = payload.new as { date: string };
+          if (row.date === dateRef.current) refreshQuietly(row.date);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "barber_schedules",
+          filter: `barber_id=eq.${barberId}`,
+        },
+        // A delete only carries the row's id (no REPLICA IDENTITY FULL), so there's no
+        // date on the payload to check — just re-pull whatever day is on screen.
+        () => refreshQuietly(dateRef.current)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [barberId]);
 
   function handleCancel(id: string, reason: "cancelled" | "no_show") {
     startMutating(async () => {
