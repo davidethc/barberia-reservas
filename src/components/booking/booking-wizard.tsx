@@ -45,6 +45,8 @@ export function BookingWizard({ services, barbers, business }: Props) {
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
   const [slots, setSlots] = useState<string[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  const [slotsFailed, setSlotsFailed] = useState(false);
+  const [slotsRetry, setSlotsRetry] = useState(0);
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -65,13 +67,33 @@ export function BookingWizard({ services, barbers, business }: Props) {
   // set here since it depends on the async call this same effect triggers.
   useEffect(() => {
     if (!selectedBarber || !selectedService) return;
+    // Tapping through dates fires overlapping requests, and a slow earlier one
+    // must not overwrite the slots of the date now selected.
+    let stale = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadingSlots(true);
+    setSlotsFailed(false);
     setSelectedTime(null);
     getAvailableSlots(selectedBarber.id, selectedDate, selectedService.duration_minutes)
-      .then(setSlots)
-      .finally(() => setLoadingSlots(false));
-  }, [selectedBarber, selectedDate, selectedService]);
+      .then((result) => {
+        if (!stale) setSlots(result);
+      })
+      .catch(() => {
+        // Without this the failure reads as "no hay horarios" and the client
+        // leaves thinking the shop is full.
+        if (!stale) {
+          setSlots([]);
+          setSlotsFailed(true);
+        }
+      })
+      .finally(() => {
+        if (!stale) setLoadingSlots(false);
+      });
+
+    return () => {
+      stale = true;
+    };
+  }, [selectedBarber, selectedDate, selectedService, slotsRetry]);
 
   function handleSelectService(service: Service) {
     setSelectedService(service);
@@ -158,6 +180,8 @@ export function BookingWizard({ services, barbers, business }: Props) {
             onSelectDate={setSelectedDate}
             slots={slots}
             loading={loadingSlots}
+            failed={slotsFailed}
+            onRetry={() => setSlotsRetry((n) => n + 1)}
             onSelectTime={handleSelectTime}
             onBack={() => setStep("barber")}
           />
@@ -268,6 +292,8 @@ function ScheduleStep({
   onSelectDate,
   slots,
   loading,
+  failed,
+  onRetry,
   onSelectTime,
   onBack,
 }: {
@@ -276,6 +302,8 @@ function ScheduleStep({
   onSelectDate: (d: string) => void;
   slots: string[];
   loading: boolean;
+  failed: boolean;
+  onRetry: () => void;
   onSelectTime: (t: string) => void;
   onBack: () => void;
 }) {
@@ -315,6 +343,19 @@ function ScheduleStep({
           {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={i} className="rounded-lg h-11 w-full" />
           ))}
+        </div>
+      ) : failed ? (
+        <div className="py-8 text-center">
+          <div className="text-sm text-muted-foreground">
+            No pudimos cargar los horarios
+          </div>
+          <Button
+            onClick={onRetry}
+            variant="outline"
+            className="mt-3 h-11 rounded-lg px-5 text-sm font-medium"
+          >
+            Reintentar
+          </Button>
         </div>
       ) : slots.length === 0 ? (
         <div className="text-sm py-8 text-center text-muted-foreground">
@@ -362,7 +403,14 @@ function DetailsStep({
   isPending: boolean;
   onBack: () => void;
 }) {
-  const isValid = clientName.trim().length >= 2 && /^0\d{9}$/.test(clientPhone.trim());
+  const nameValue = clientName.trim();
+  const phoneValue = clientPhone.trim();
+  const nameIsValid = nameValue.length >= 2;
+  const phoneIsValid = /^0\d{9}$/.test(phoneValue);
+  const isValid = nameIsValid && phoneIsValid;
+  const nameError = nameValue.length > 0 && !nameIsValid ? "Ingresá tu nombre completo" : null;
+  const phoneError =
+    phoneValue.length > 0 && !phoneIsValid ? "El teléfono va con 10 dígitos: 09XXXXXXXX" : null;
 
   return (
     <div className="px-7 pb-8">
@@ -394,11 +442,19 @@ function DetailsStep({
           <Input
             id="client-name"
             type="text"
+            autoComplete="name"
             value={clientName}
             onChange={(e) => onChangeName(e.target.value)}
             placeholder="Tu nombre"
-            className="h-auto w-full px-4 py-3 rounded-xl text-sm bg-card"
+            aria-invalid={!!nameError}
+            aria-describedby={nameError ? "client-name-error" : undefined}
+            className="h-auto w-full px-4 py-3 rounded-xl text-base bg-card"
           />
+          {nameError && (
+            <p id="client-name-error" className="mt-1.5 text-sm text-destructive">
+              {nameError}
+            </p>
+          )}
         </div>
         <div>
           <Label htmlFor="client-phone" className="block text-sm mb-1.5 font-medium text-foreground">
@@ -407,11 +463,20 @@ function DetailsStep({
           <Input
             id="client-phone"
             type="tel"
+            inputMode="numeric"
+            autoComplete="tel"
             value={clientPhone}
             onChange={(e) => onChangePhone(e.target.value)}
             placeholder="09XXXXXXXX"
-            className="h-auto w-full px-4 py-3 rounded-xl text-sm bg-card"
+            aria-invalid={!!phoneError}
+            aria-describedby={phoneError ? "client-phone-error" : undefined}
+            className="h-auto w-full px-4 py-3 rounded-xl text-base bg-card"
           />
+          {phoneError && (
+            <p id="client-phone-error" className="mt-1.5 text-sm text-destructive">
+              {phoneError}
+            </p>
+          )}
         </div>
       </div>
 
