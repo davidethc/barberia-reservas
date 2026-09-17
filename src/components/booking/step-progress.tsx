@@ -1,4 +1,8 @@
+"use client";
+
+import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
+import { SPRING_SNAPPY } from "@/lib/motion";
 
 /**
  * Keeps the header's hairline rule as the progress affordance: the completed
@@ -23,12 +27,14 @@ export function StepProgress({
       aria-label={`Paso ${current} de ${total}: ${label}`}
     >
       {Array.from({ length: total }).map((_, i) => (
-        <span
+        <motion.span
           key={i}
           className={cn(
-            "h-0.5 rounded-full transition-all duration-300",
-            i < current ? "w-9 bg-foreground" : "w-4 bg-muted-foreground/40"
+            "h-0.5 rounded-full",
+            i < current ? "bg-foreground" : "bg-muted-foreground/40"
           )}
+          animate={{ width: i < current ? 36 : 16 }}
+          transition={SPRING_SNAPPY}
         />
       ))}
     </div>

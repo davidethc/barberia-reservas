@@ -1,10 +1,13 @@
 "use client";
 
+import { motion } from "motion/react";
 import { toast } from "sonner";
+import { Scissors, Calendar, Clock, MapPin } from "lucide-react";
 import { formatPrice, formatTime, buildWhatsAppLink } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { downloadCalendarEvent } from "./calendar";
 import { formatLongDate } from "@/lib/shop-date";
+import { SPRING_SOFT } from "@/lib/motion";
 import type { Business, ConfirmedBooking } from "./types";
 
 export function ConfirmationView({
@@ -42,19 +45,27 @@ export function ConfirmationView({
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-7 py-12 bg-background animate-in fade-in zoom-in-95 duration-300">
+    <div className="min-h-screen flex flex-col items-center justify-center px-7 py-12 bg-background">
       <div className="w-full max-w-sm">
-        <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6 mx-auto bg-accent">
+        <motion.div
+          className="w-16 h-16 rounded-full flex items-center justify-center mb-6 mx-auto bg-accent"
+          initial={{ scale: 0.6, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={SPRING_SOFT}
+        >
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
+            <motion.path
               d="M5 12l5 5L19 7"
               className="stroke-accent-foreground"
               strokeWidth="2.5"
               strokeLinecap="round"
               strokeLinejoin="round"
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ delay: 0.15, duration: 0.35, ease: "easeOut" }}
             />
           </svg>
-        </div>
+        </motion.div>
 
         <h2 className="text-2xl font-bold text-center text-foreground">
           {restored ? "Tu próximo turno" : "Reserva confirmada"}
@@ -68,10 +79,24 @@ export function ConfirmationView({
         <div className="rounded-2xl p-6 mt-6 mb-6 bg-surface">
           <div className="text-lg font-semibold text-foreground">{booking.serviceName}</div>
           <div className="text-sm mt-2 space-y-0.5 text-muted-foreground">
-            <div>💈 {booking.barberName}</div>
-            <div>📅 {formatLongDate(booking.date)}</div>
-            <div>🕐 {formatTime(booking.time)}</div>
-            {business.address && <div>📍 {business.address}</div>}
+            <div className="flex items-center gap-2">
+              <Scissors className="size-4" />
+              {booking.barberName}
+            </div>
+            <div className="flex items-center gap-2">
+              <Calendar className="size-4" />
+              {formatLongDate(booking.date)}
+            </div>
+            <div className="flex items-center gap-2">
+              <Clock className="size-4" />
+              {formatTime(booking.time)}
+            </div>
+            {business.address && (
+              <div className="flex items-center gap-2">
+                <MapPin className="size-4" />
+                {business.address}
+              </div>
+            )}
           </div>
           <div className="text-xl font-bold mt-3 text-foreground">
             {formatPrice(booking.price)}
@@ -98,8 +123,7 @@ export function ConfirmationView({
             href={whatsappLink}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-3 w-full min-h-11 rounded-2xl py-4 text-center flex items-center justify-center font-semibold text-white transition-transform active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            style={{ background: "#25D366" }}
+            className="mt-3 w-full min-h-11 rounded-2xl py-4 text-center flex items-center justify-center font-semibold text-white transition-transform active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background bg-whatsapp"
           >
             Compartir por WhatsApp
           </a>

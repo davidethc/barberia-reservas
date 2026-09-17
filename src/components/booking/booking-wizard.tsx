@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useEffect, useMemo } from "react";
 import { toast } from "sonner";
+import { AnimatePresence, motion } from "motion/react";
 import { createAppointment, getAvailableSlots } from "@/app/actions/booking";
 import { formatPrice, formatDate, formatTime, cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { ConfirmationView } from "./confirmation-view";
 import { StepProgress } from "./step-progress";
 import { formatDayNumber, formatWeekdayShort, getDayOfWeek } from "@/lib/shop-date";
 import { isConfirmedBooking, type Barber, type Business, type ConfirmedBooking, type Service } from "./types";
+import { SPRING_SNAPPY, TAP_SCALE, stepVariants } from "@/lib/motion";
 
 type Props = {
   services: Service[];
@@ -35,7 +37,7 @@ const STEPS: { id: Step; label: string }[] = [
 const BOOKING_STORAGE_KEY = "eb_booking";
 
 export function BookingWizard({ services, barbers, business, openDays, dates }: Props) {
-  const [step, setStep] = useState<Step>("service");
+  const [[step, direction], setStep] = useState<[Step, 1 | -1]>(["service", 1]);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [selectedBarber, setSelectedBarber] = useState<Barber | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(
@@ -51,6 +53,10 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
   const [confirmed, setConfirmed] = useState<ConfirmedBooking | null>(null);
   const [restored, setRestored] = useState(false);
   const [isPending, startTransition] = useTransition();
+
+  function goTo(next: Step, dir: 1 | -1) {
+    setStep([next, dir]);
+  }
 
   const openDaySet = useMemo(() => new Set(openDays), [openDays]);
   const selectedDateIsOpen = openDaySet.has(getDayOfWeek(selectedDate));
@@ -128,17 +134,17 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
 
   function handleSelectService(service: Service) {
     setSelectedService(service);
-    setStep("barber");
+    goTo("barber", 1);
   }
 
   function handleSelectBarber(barber: Barber) {
     setSelectedBarber(barber);
-    setStep("schedule");
+    goTo("schedule", 1);
   }
 
   function handleSelectTime(time: string) {
     setSelectedTime(time);
-    setStep("details");
+    goTo("details", 1);
   }
 
   function handleReset() {
@@ -152,7 +158,7 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
     setSelectedDate(firstOpenDate(dates, openDays));
     setSelectedTime(null);
     setSlots([]);
-    setStep("service");
+    goTo("service", 1);
   }
 
   function handleSubmit() {
@@ -224,51 +230,61 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
         />
       </header>
 
-      <div key={step} className="animate-in fade-in slide-in-from-right-2 duration-300">
-        {step === "service" && (
-          <ServiceStep services={services} onSelect={handleSelectService} />
-        )}
+      <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+        <motion.div
+          key={step}
+          custom={direction}
+          variants={stepVariants}
+          initial="enter"
+          animate="center"
+          exit="exit"
+          transition={SPRING_SNAPPY}
+        >
+          {step === "service" && (
+            <ServiceStep services={services} onSelect={handleSelectService} />
+          )}
 
-        {step === "barber" && (
-          <BarberStep
-            barbers={barbers}
-            onSelect={handleSelectBarber}
-            onBack={() => setStep("service")}
-          />
-        )}
+          {step === "barber" && (
+            <BarberStep
+              barbers={barbers}
+              onSelect={handleSelectBarber}
+              onBack={() => goTo("service", -1)}
+            />
+          )}
 
-        {step === "schedule" && (
-          <ScheduleStep
-            dates={dates}
-            openDaySet={openDaySet}
-            selectedDate={selectedDate}
-            selectedDateIsOpen={selectedDateIsOpen}
-            onSelectDate={setSelectedDate}
-            slots={slots}
-            loading={loadingSlots}
-            failed={slotsFailed}
-            onRetry={() => setSlotsRetry((n) => n + 1)}
-            onSelectTime={handleSelectTime}
-            onBack={() => setStep("barber")}
-          />
-        )}
+          {step === "schedule" && (
+            <ScheduleStep
+              dates={dates}
+              openDaySet={openDaySet}
+              selectedDate={selectedDate}
+              selectedDateIsOpen={selectedDateIsOpen}
+              onSelectDate={setSelectedDate}
+              slots={slots}
+              loading={loadingSlots}
+              failed={slotsFailed}
+              onRetry={() => setSlotsRetry((n) => n + 1)}
+              onSelectTime={handleSelectTime}
+              onBack={() => goTo("barber", -1)}
+            />
+          )}
 
-        {step === "details" && selectedService && selectedBarber && selectedTime && (
-          <DetailsStep
-            service={selectedService}
-            barber={selectedBarber}
-            date={selectedDate}
-            time={selectedTime}
-            clientName={clientName}
-            clientPhone={clientPhone}
-            onChangeName={setClientName}
-            onChangePhone={setClientPhone}
-            onSubmit={handleSubmit}
-            isPending={isPending}
-            onBack={() => setStep("schedule")}
-          />
-        )}
-      </div>
+          {step === "details" && selectedService && selectedBarber && selectedTime && (
+            <DetailsStep
+              service={selectedService}
+              barber={selectedBarber}
+              date={selectedDate}
+              time={selectedTime}
+              clientName={clientName}
+              clientPhone={clientPhone}
+              onChangeName={setClientName}
+              onChangePhone={setClientPhone}
+              onSubmit={handleSubmit}
+              isPending={isPending}
+              onBack={() => goTo("schedule", -1)}
+            />
+          )}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }
@@ -292,12 +308,13 @@ function ServiceStep({
         Servicio
       </div>
       {services.map((service, i) => (
-        <button
+        <motion.button
           key={service.id}
           onClick={() => onSelect(service)}
+          whileTap={{ scale: TAP_SCALE }}
+          transition={SPRING_SNAPPY}
           className={cn(
             "w-full text-left flex justify-between items-baseline gap-4 py-5.5 min-h-11",
-            "transition-transform active:scale-[0.98]",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm",
             i < services.length - 1 && "border-b border-border"
           )}
@@ -313,7 +330,7 @@ function ServiceStep({
           <div className="text-xl font-bold text-foreground">
             {formatPrice(service.price)}
           </div>
-        </button>
+        </motion.button>
       ))}
     </div>
   );
@@ -342,10 +359,12 @@ function BarberStep({
       </div>
       <div className="flex gap-3.5">
         {barbers.map((barber) => (
-          <button
+          <motion.button
             key={barber.id}
             onClick={() => onSelect(barber)}
-            className="flex-1 rounded-2xl p-5 text-center border border-border transition-transform active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            whileTap={{ scale: TAP_SCALE }}
+            transition={SPRING_SNAPPY}
+            className="flex-1 rounded-2xl p-5 text-center border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center bg-border">
               <svg width="24" height="24" fill="none" viewBox="0 0 24 24" aria-hidden="true">
@@ -354,7 +373,7 @@ function BarberStep({
               </svg>
             </div>
             <div className="text-base font-semibold text-foreground">{barber.name}</div>
-          </button>
+          </motion.button>
         ))}
       </div>
     </div>
@@ -403,15 +422,16 @@ function ScheduleStep({
           const isOpen = openDaySet.has(getDayOfWeek(date));
           const isSelected = date === selectedDate;
           return (
-            <button
+            <motion.button
               key={date}
               onClick={() => isOpen && onSelectDate(date)}
               disabled={!isOpen}
+              whileTap={isOpen ? { scale: TAP_SCALE } : undefined}
+              transition={SPRING_SNAPPY}
               aria-label={`${i === 0 ? "Hoy, " : ""}${formatDate(date)}${isOpen ? "" : ", cerrado"}`}
               className={cn(
                 "shrink-0 w-[4.5rem] min-h-14 px-2 py-2 rounded-lg flex flex-col items-center justify-center gap-0.5",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                isOpen && "transition-transform active:scale-[0.98]",
                 !isOpen
                   ? "border border-dashed border-border text-muted-foreground cursor-not-allowed"
                   : isSelected
@@ -429,7 +449,7 @@ function ScheduleStep({
                   Cerrado
                 </span>
               )}
-            </button>
+            </motion.button>
           );
         })}
       </div>
@@ -464,13 +484,15 @@ function ScheduleStep({
       ) : (
         <div className="grid grid-cols-4 gap-2">
           {slots.map((time) => (
-            <button
+            <motion.button
               key={time}
               onClick={() => onSelectTime(time)}
-              className="rounded-lg py-3 min-h-11 text-center text-sm font-medium border border-border text-foreground transition-transform active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              whileTap={{ scale: TAP_SCALE }}
+              transition={SPRING_SNAPPY}
+              className="rounded-lg py-3 min-h-11 text-center text-sm font-medium border border-border text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
               {formatTime(time)}
-            </button>
+            </motion.button>
           ))}
         </div>
       )}
