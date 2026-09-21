@@ -1,14 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { motion } from "motion/react";
 import { toast } from "sonner";
-import { Scissors, Calendar, Clock, MapPin } from "lucide-react";
-import { formatPrice, formatTime, buildWhatsAppLink } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { CalendarPlus, MapPin, MessageCircle } from "lucide-react";
+import { formatPrice, formatTime, buildWhatsAppLink, cn } from "@/lib/utils";
+import { BRAND_NAME, mapsUrl } from "@/lib/brand";
 import { downloadCalendarEvent } from "./calendar";
 import { formatLongDate } from "@/lib/shop-date";
 import { SPRING_SOFT } from "@/lib/motion";
+import { pillClasses } from "@/components/monky/pill-link";
+import { Monogram } from "@/components/monky/site-header";
 import type { Business, ConfirmedBooking } from "./types";
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 10 },
+  visible: { opacity: 1, y: 0 },
+};
 
 export function ConfirmationView({
   booking,
@@ -21,138 +29,154 @@ export function ConfirmationView({
   restored: boolean;
   onReset: () => void;
 }) {
-  const businessPhone = (business.phone ?? "").replace(/\D/g, "");
-  const whatsappLink = businessPhone
+  const whatsappLink = business.phone
     ? buildWhatsAppLink({
-        businessPhone,
+        businessPhone: business.phone,
         serviceName: booking.serviceName,
         barberName: booking.barberName,
         date: booking.date,
         time: booking.time,
+        notes: booking.notes,
       })
-    : null;
-  const mapsLink = business.address
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(business.address)}`
     : null;
 
   function handleAddToCalendar() {
     try {
       downloadCalendarEvent(booking, business);
-      toast.success("Listo. Abre el archivo para agregar el turno a tu calendario.");
+      toast.success("Listo. Abre el archivo para guardar la cita en tu calendario.");
     } catch {
       toast.error("No pudimos generar el archivo. Intenta de nuevo.");
     }
   }
 
+  const rows = [
+    { label: "Barbero", value: booking.barberName },
+    { label: "Fecha", value: formatLongDate(booking.date) },
+    { label: "Hora", value: `${formatTime(booking.time)} · ${booking.durationMinutes} min` },
+    ...(booking.notes ? [{ label: "Nota", value: booking.notes }] : []),
+  ];
+
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-7 py-12 bg-background">
-      <div className="w-full max-w-sm">
+    <div className="mx-auto flex w-full max-w-[480px] flex-1 flex-col px-5 pb-10">
+      <header className="flex h-16 items-center justify-center">
+        <Link href="/" className="flex items-center gap-2" aria-label={`${BRAND_NAME}, inicio`}>
+          <Monogram className="size-7" />
+          <span className="text-xs font-bold tracking-[0.28em]">{BRAND_NAME}</span>
+        </Link>
+      </header>
+
+      <motion.div
+        className="flex flex-col"
+        initial="hidden"
+        animate="visible"
+        variants={{ visible: { transition: { staggerChildren: 0.07, delayChildren: 0.1 } } }}
+      >
         <motion.div
-          className="w-16 h-16 rounded-full flex items-center justify-center mb-6 mx-auto bg-accent"
-          initial={{ scale: 0.6, opacity: 0 }}
+          className="mx-auto mt-4 grid size-24 place-items-center rounded-full bg-primary"
+          initial={{ scale: 0.7, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={SPRING_SOFT}
         >
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <motion.path
-              d="M5 12l5 5L19 7"
-              className="stroke-accent-foreground"
-              strokeWidth="2.5"
+              d="M5 12.5l4.5 4.5L19 7.5"
+              className="stroke-primary-foreground"
+              strokeWidth="2.25"
               strokeLinecap="round"
               strokeLinejoin="round"
               initial={{ pathLength: 0 }}
               animate={{ pathLength: 1 }}
-              transition={{ delay: 0.15, duration: 0.35, ease: "easeOut" }}
+              transition={{ delay: 0.3, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
             />
           </svg>
         </motion.div>
 
-        <h2 className="text-2xl font-bold text-center text-foreground">
-          {restored ? "Tu próximo turno" : "Reserva confirmada"}
-        </h2>
-        <p className="text-sm mt-2 text-center text-muted-foreground">
-          {restored
-            ? "Te esperamos en el horario reservado."
-            : "Ya tienes tu lugar agendado. Te esperamos."}
-        </p>
+        <motion.h1 className="mt-6 text-center" variants={itemVariants}>
+          <span className="block text-[2rem] leading-[1.05] font-extrabold tracking-[-0.03em]">
+            {restored ? "Tu próxima" : "¡Listo, te"}
+          </span>
+          <span className="-mt-1 block font-script text-[2.75rem] leading-[1.15] text-primary">
+            {restored ? "cita" : "esperamos!"}
+          </span>
+        </motion.h1>
+        <motion.p className="mt-2 text-center text-[0.9375rem] text-muted-foreground" variants={itemVariants}>
+          {restored ? "La tienes guardada en este teléfono." : "Tu cita quedó reservada."}
+        </motion.p>
 
-        <div className="rounded-2xl p-6 mt-6 mb-6 bg-surface">
-          <div className="text-lg font-semibold text-foreground">{booking.serviceName}</div>
-          <div className="text-sm mt-2 space-y-0.5 text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <Scissors className="size-4" />
-              {booking.barberName}
+        <motion.div className="mt-6 overflow-hidden rounded-[20px] bg-card shadow-card" variants={itemVariants}>
+          <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-4">
+            <div>
+              <p className="text-lg font-bold">{booking.serviceName}</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">{BRAND_NAME}</p>
             </div>
-            <div className="flex items-center gap-2">
-              <Calendar className="size-4" />
-              {formatLongDate(booking.date)}
-            </div>
-            <div className="flex items-center gap-2">
-              <Clock className="size-4" />
-              {formatTime(booking.time)}
-            </div>
-            {business.address && (
-              <div className="flex items-center gap-2">
-                <MapPin className="size-4" />
-                {business.address}
+            <p className="text-2xl font-extrabold text-primary tabular-nums">{formatPrice(booking.price)}</p>
+          </div>
+          <dl className="space-y-2.5 px-5 pb-5 text-sm">
+            {rows.map((r) => (
+              <div key={r.label} className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">{r.label}</dt>
+                <dd className="text-right font-semibold break-words">{r.value}</dd>
               </div>
-            )}
+            ))}
+          </dl>
+          <div className="relative flex items-center justify-between border-t border-dashed border-border px-5 py-4">
+            <span aria-hidden className="absolute -top-2 -left-2 size-4 rounded-full bg-background" />
+            <span aria-hidden className="absolute -top-2 -right-2 size-4 rounded-full bg-background" />
+            <span className="text-sm text-muted-foreground">Código de cita</span>
+            <span className="font-mono text-lg font-bold tracking-[0.2em] tabular-nums">{booking.code}</span>
           </div>
-          <div className="text-xl font-bold mt-3 text-foreground">
-            {formatPrice(booking.price)}
-          </div>
-          <div className="mt-4 pt-4 border-t border-border flex items-baseline justify-between gap-3">
-            <span className="text-xs font-semibold tracking-widest uppercase text-muted-foreground">
-              Código
-            </span>
-            <span className="text-sm font-semibold tracking-wider text-foreground">
-              {booking.code}
-            </span>
-          </div>
-        </div>
+        </motion.div>
 
-        <Button
-          onClick={handleAddToCalendar}
-          className="w-full h-auto rounded-2xl py-5 cursor-pointer transition-transform active:scale-[0.98]"
-        >
-          <span className="text-base font-semibold">Agregar al calendario</span>
-        </Button>
-
-        {whatsappLink && (
-          <a
-            href={whatsappLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-3 w-full min-h-11 rounded-2xl py-4 text-center flex items-center justify-center font-semibold text-white transition-transform active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background bg-whatsapp"
-          >
-            Compartir por WhatsApp
-          </a>
-        )}
-
-        <p className="mt-5 text-xs leading-relaxed text-center text-muted-foreground">
-          Guardamos este turno en tu teléfono, así lo encuentras aunque cierres la página.
-          {whatsappLink ? " Para cancelar o cambiarlo, escríbenos por WhatsApp." : ""}
-        </p>
-
-        <div className="flex justify-center gap-4 mt-4">
-          {mapsLink && (
+        <motion.div className="mt-6 flex flex-col gap-3" variants={itemVariants}>
+          <button type="button" onClick={handleAddToCalendar} className={cn(pillClasses, "w-full")}>
+            <CalendarPlus aria-hidden className="size-5" strokeWidth={2} />
+            Agregar al calendario
+          </button>
+          {whatsappLink && (
             <a
-              href={mapsLink}
+              href={whatsappLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex min-h-11 items-center justify-center px-2 text-sm font-medium text-muted-foreground transition-transform active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
+              className="inline-flex min-h-14 w-full items-center justify-center gap-2.5 rounded-full border-2 border-foreground/80 font-bold transition-colors duration-200 hover:border-foreground hover:bg-card active:scale-[0.97]"
             >
+              <MessageCircle aria-hidden className="size-5" strokeWidth={2} />
+              Compartir por WhatsApp
+              <span className="sr-only">(se abre en una pestaña nueva)</span>
+            </a>
+          )}
+        </motion.div>
+
+        <motion.p className="mt-4 text-center text-xs leading-relaxed text-muted-foreground" variants={itemVariants}>
+          Pagas en el local.{whatsappLink ? " Para cambiar o cancelar, escríbenos por WhatsApp." : ""}
+        </motion.p>
+
+        <motion.div className="mt-4 flex flex-wrap justify-center gap-2" variants={itemVariants}>
+          {business.address && (
+            <a
+              href={mapsUrl(business.address)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-full px-4 text-sm font-semibold text-muted-foreground hover:bg-card hover:text-foreground"
+            >
+              <MapPin aria-hidden className="size-4" strokeWidth={1.75} />
               Cómo llegar
             </a>
           )}
           <button
+            type="button"
             onClick={onReset}
-            className="flex min-h-11 items-center justify-center px-2 text-sm font-medium text-muted-foreground transition-transform active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
+            className="inline-flex min-h-11 items-center rounded-full px-4 text-sm font-semibold text-muted-foreground hover:bg-card hover:text-foreground"
           >
-            Reservar otro turno
+            Reservar otra cita
           </button>
-        </div>
-      </div>
+          <Link
+            href="/"
+            className="inline-flex min-h-11 items-center rounded-full px-4 text-sm font-semibold text-muted-foreground hover:bg-card hover:text-foreground"
+          >
+            Ir al inicio
+          </Link>
+        </motion.div>
+      </motion.div>
     </div>
   );
 }

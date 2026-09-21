@@ -1,7 +1,19 @@
 export { cn } from "cn";
+import { BRAND_NAME, toWhatsAppNumber } from "@/lib/brand";
 
 export function formatPrice(price: number): string {
   return `$${price.toFixed(0)}`;
+}
+
+/** Mountos con centavos y coma decimal, estilo Ecuador (es-EC): "$2,40". */
+export function formatMoney(value: number): string {
+  const rounded = Math.round((value + Number.EPSILON) * 100) / 100;
+  return new Intl.NumberFormat("es-EC", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(rounded);
 }
 
 export function formatDate(dateStr: string): string {
@@ -30,7 +42,9 @@ export function buildWhatsAppLink(data: {
   barberName: string;
   date: string;
   time: string;
+  notes?: string;
 }): string {
-  const msg = `Hola, reservé un turno:\n📋 ${data.serviceName}\n💈 ${data.barberName}\n📅 ${formatDate(data.date)}\n🕐 ${formatTime(data.time)}\n\nExclusive Barber Shop`;
-  return `https://wa.me/${data.businessPhone}?text=${encodeURIComponent(msg)}`;
+  const note = data.notes ? `\n📝 ${data.notes}` : "";
+  const msg = `Hola, reservé una cita:\n📋 ${data.serviceName}\n💈 ${data.barberName}\n📅 ${formatDate(data.date)}\n🕐 ${formatTime(data.time)}${note}\n\n${BRAND_NAME}`;
+  return `https://wa.me/${toWhatsAppNumber(data.businessPhone)}?text=${encodeURIComponent(msg)}`;
 }

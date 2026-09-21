@@ -1,19 +1,36 @@
 "use client";
 
-import { useState, useTransition, useEffect, useMemo } from "react";
-import { toast } from "sonner";
+import Link from "next/link";
+import { useState, useTransition, useEffect, useMemo, useId } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { createAppointment, getAvailableSlots } from "@/app/actions/booking";
-import { formatPrice, formatDate, formatTime, cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowRight,
+  CalendarOff,
+  CalendarX,
+  Loader2,
+  MessageCircle,
+  Shuffle,
+  WifiOff,
+} from "lucide-react";
+import {
+  createAppointment,
+  createAppointmentAnyBarber,
+  getAnyBarberSlots,
+  getAvailableSlots,
+} from "@/app/actions/booking";
+import { formatPrice, formatTime, cn } from "@/lib/utils";
+import { BRAND_NAME, toWhatsAppNumber } from "@/lib/brand";
 import { ConfirmationView } from "./confirmation-view";
 import { StepProgress } from "./step-progress";
-import { formatDayNumber, formatWeekdayShort, getDayOfWeek } from "@/lib/shop-date";
+import { formatDayNumber, formatLongDate, formatWeekdayShort, getDayOfWeek } from "@/lib/shop-date";
 import { isConfirmedBooking, type Barber, type Business, type ConfirmedBooking, type Service } from "./types";
-import { SPRING_SNAPPY, TAP_SCALE, stepVariants } from "@/lib/motion";
+import { SPRING_SNAPPY, stepVariants } from "@/lib/motion";
+import { Monogram } from "@/components/monky/site-header";
+import { BarberAvatar } from "@/components/monky/barber-card";
+import { ServiceRowContent, serviceRowClasses } from "@/components/monky/service-row";
+import { pillClasses } from "@/components/monky/pill-link";
 
 type Props = {
   services: Service[];
@@ -23,44 +40,70 @@ type Props = {
   openDays: number[];
   /** The next days offered, resolved on the shop's clock by the server. */
   dates: string[];
+  /** Deep-link preselection from the home cards (`?servicio=` / `?barbero=`). */
+  initialServiceId?: string;
+  initialBarberId?: string;
 };
 
-type Step = "service" | "barber" | "schedule" | "details";
+type Step = "service" | "barber" | "schedule" | "details" | "summary";
 
-const STEPS: { id: Step; label: string }[] = [
-  { id: "service", label: "Servicio" },
-  { id: "barber", label: "Barbero" },
-  { id: "schedule", label: "Horario" },
-  { id: "details", label: "Tus datos" },
+const STEPS: { id: Step; label: string; title: [string, string] }[] = [
+  { id: "service", label: "Servicio", title: ["Elige tu", "servicio"] },
+  { id: "barber", label: "Barbero", title: ["Elige tu", "barbero"] },
+  { id: "schedule", label: "Fecha y hora", title: ["Elige día", "y hora"] },
+  { id: "details", label: "Tus datos", title: ["Déjanos tus", "datos"] },
+  { id: "summary", label: "Resumen", title: ["Revisa tu", "cita"] },
 ];
 
 const BOOKING_STORAGE_KEY = "eb_booking";
+const ANY_BARBER: Barber = { id: "any", name: "Cualquiera disponible", photo_url: null };
+const SLOT_TAKEN_MESSAGE = "Este horario ya fue reservado. Elige otro.";
 
-export function BookingWizard({ services, barbers, business, openDays, dates }: Props) {
-  const [[step, direction], setStep] = useState<[Step, 1 | -1]>(["service", 1]);
-  const [selectedService, setSelectedService] = useState<Service | null>(null);
-  const [selectedBarber, setSelectedBarber] = useState<Barber | null>(null);
-  const [selectedDate, setSelectedDate] = useState<string>(
-    () => firstOpenDate(dates, openDays)
-  );
+export function BookingWizard({
+  services,
+  barbers,
+  business,
+  openDays,
+  dates,
+  initialServiceId,
+  initialBarberId,
+}: Props) {
+  const initialService = services.find((s) => s.id === initialServiceId) ?? null;
+  const initialBarber =
+    initialBarberId === ANY_BARBER.id ? ANY_BARBER : (barbers.find((b) => b.id === initialBarberId) ?? null);
+  const deepLinked = initialService !== null || initialBarber !== null;
+
+  const [[step, direction], setStep] = useState<[Step, 1 | -1]>(() => [
+    initialService ? (initialBarber ? "schedule" : "barber") : "service",
+    1,
+  ]);
+  const [selectedService, setSelectedService] = useState<Service | null>(initialService);
+  const [selectedBarber, setSelectedBarber] = useState<Barber | null>(initialBarber);
+  const [selectedDate, setSelectedDate] = useState<string>(() => firstOpenDate(dates, openDays));
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
   const [slots, setSlots] = useState<string[]>([]);
+  /** Today only: slot starts before this already passed and are shown struck through. */
+  const [pastBefore, setPastBefore] = useState<string | null>(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slotsFailed, setSlotsFailed] = useState(false);
   const [slotsRetry, setSlotsRetry] = useState(0);
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState<ConfirmedBooking | null>(null);
   const [restored, setRestored] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   function goTo(next: Step, dir: 1 | -1) {
     setStep([next, dir]);
+    window.scrollTo({ top: 0 });
   }
 
   const openDaySet = useMemo(() => new Set(openDays), [openDays]);
   const selectedDateIsOpen = openDaySet.has(getDayOfWeek(selectedDate));
   const stepIndex = STEPS.findIndex((s) => s.id === step);
+  const current = STEPS[stepIndex]!;
 
   // localStorage isn't available during SSR, so this can't be a lazy useState
   // initializer — it has to run post-mount in an effect.
@@ -70,6 +113,9 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
     if (saved) setClientPhone(saved);
     const savedName = localStorage.getItem("eb_client_name");
     if (savedName) setClientName(savedName);
+
+    // Arriving from a service or barber card means a new booking, not "show me my turn".
+    if (deepLinked) return;
 
     // A refresh used to wipe the confirmation and leave nothing behind; the
     // turn is kept here until the day it happens is over.
@@ -90,7 +136,7 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
     } catch {
       // Corrupt or unavailable storage must never block a new booking.
     }
-  }, [dates]);
+  }, [dates, deepLinked]);
 
   // Standard fetch-on-dependency-change pattern; the loading flag has to be
   // set here since it depends on the async call this same effect triggers.
@@ -100,6 +146,7 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
     if (!openDaySet.has(getDayOfWeek(selectedDate))) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSlots([]);
+      setPastBefore(null);
       setLoadingSlots(false);
       setSlotsFailed(false);
       setSelectedTime(null);
@@ -111,15 +158,22 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
     setLoadingSlots(true);
     setSlotsFailed(false);
     setSelectedTime(null);
-    getAvailableSlots(selectedBarber.id, selectedDate, selectedService.duration_minutes)
+    const request =
+      selectedBarber.id === ANY_BARBER.id
+        ? getAnyBarberSlots(selectedDate, selectedService.duration_minutes)
+        : getAvailableSlots(selectedBarber.id, selectedDate, selectedService.duration_minutes);
+    request
       .then((result) => {
-        if (!stale) setSlots(result);
+        if (stale) return;
+        setSlots(result.slots);
+        setPastBefore(result.pastBefore);
       })
       .catch(() => {
         // Without this the failure reads as "no hay horarios" and the client
         // leaves thinking the shop is full.
         if (!stale) {
           setSlots([]);
+          setPastBefore(null);
           setSlotsFailed(true);
         }
       })
@@ -134,7 +188,7 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
 
   function handleSelectService(service: Service) {
     setSelectedService(service);
-    goTo("barber", 1);
+    goTo(selectedBarber ? "schedule" : "barber", 1);
   }
 
   function handleSelectBarber(barber: Barber) {
@@ -145,6 +199,11 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
   function handleSelectTime(time: string) {
     setSelectedTime(time);
     goTo("details", 1);
+  }
+
+  function handleBack() {
+    setSubmitError(null);
+    goTo(STEPS[stepIndex - 1]!.id, -1);
   }
 
   function handleReset() {
@@ -158,77 +217,112 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
     setSelectedDate(firstOpenDate(dates, openDays));
     setSelectedTime(null);
     setSlots([]);
+    setPastBefore(null);
+    setNotes("");
+    setSubmitError(null);
     goTo("service", 1);
   }
 
   function handleSubmit() {
     if (isPending || !selectedService || !selectedBarber || !selectedTime) return;
+    setSubmitError(null);
 
     startTransition(async () => {
-      const result = await createAppointment({
+      const payload = {
         serviceId: selectedService.id,
-        barberId: selectedBarber.id,
         date: selectedDate,
         startTime: selectedTime,
         clientName: clientName.trim(),
         clientPhone: clientPhone.trim(),
-      });
+      };
+      const isAny = selectedBarber.id === ANY_BARBER.id;
+      const result = isAny
+        ? await createAppointmentAnyBarber(payload)
+        : await createAppointment({ ...payload, barberId: selectedBarber.id });
 
-      if (result.success) {
-        const booking: ConfirmedBooking = {
-          code: result.data.appointmentId.replace(/-/g, "").slice(0, 6).toUpperCase(),
-          serviceName: selectedService.name,
-          price: selectedService.price,
-          durationMinutes: selectedService.duration_minutes,
-          barberName: selectedBarber.name,
-          date: selectedDate,
-          time: selectedTime,
-        };
-        try {
-          localStorage.setItem("eb_client_phone", clientPhone.trim());
-          localStorage.setItem("eb_client_name", clientName.trim());
-          localStorage.setItem(BOOKING_STORAGE_KEY, JSON.stringify(booking));
-        } catch {}
-        setRestored(false);
-        setConfirmed(booking);
-      } else {
-        toast.error(result.error);
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
       }
+
+      const assignedId = "barberId" in result.data ? result.data.barberId : selectedBarber.id;
+      const barberName = barbers.find((b) => b.id === assignedId)?.name ?? selectedBarber.name;
+      const booking: ConfirmedBooking = {
+        code: result.data.appointmentId.replace(/-/g, "").slice(0, 6).toUpperCase(),
+        serviceName: selectedService.name,
+        price: selectedService.price,
+        durationMinutes: selectedService.duration_minutes,
+        barberName,
+        date: selectedDate,
+        time: selectedTime,
+        notes: notes.trim() || undefined,
+      };
+      try {
+        localStorage.setItem("eb_client_phone", clientPhone.trim());
+        localStorage.setItem("eb_client_name", clientName.trim());
+        localStorage.setItem(BOOKING_STORAGE_KEY, JSON.stringify(booking));
+      } catch {}
+      setRestored(false);
+      setConfirmed(booking);
+      window.scrollTo({ top: 0 });
     });
   }
 
   if (confirmed) {
-    return (
-      <ConfirmationView
-        booking={confirmed}
-        business={business}
-        restored={restored}
-        onReset={handleReset}
-      />
-    );
+    return <ConfirmationView booking={confirmed} business={business} restored={restored} onReset={handleReset} />;
   }
 
+  const context = [
+    stepIndex > 0 && selectedService ? `${selectedService.name} · ${formatPrice(selectedService.price)}` : null,
+    stepIndex > 1 && selectedBarber ? selectedBarber.name : null,
+    stepIndex > 2 && selectedTime ? `${formatLongDate(selectedDate)}, ${formatTime(selectedTime)}` : null,
+  ].filter(Boolean);
+
   return (
-    <div className="min-h-screen bg-background">
-      <header className="px-7 pt-11 pb-7">
-        <div className="flex items-baseline justify-between gap-4">
-          <div className="text-xs font-semibold tracking-widest uppercase text-muted-foreground">
-            Reservar turno
-          </div>
-          <div className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
-            Paso {stepIndex + 1} de {STEPS.length}
-          </div>
+    <div className="mx-auto flex w-full max-w-[480px] flex-1 flex-col">
+      <header className="sticky top-0 z-(--mk-z-header) bg-background/92 px-4 backdrop-blur-md">
+        <div className="grid h-16 grid-cols-[44px_1fr_44px] items-center">
+          {stepIndex > 0 ? (
+            <button
+              type="button"
+              onClick={handleBack}
+              aria-label={`Atrás: ${STEPS[stepIndex - 1]!.label}`}
+              className="grid size-11 place-items-center rounded-full transition-colors hover:bg-card active:scale-95"
+            >
+              <ArrowLeft className="size-5" strokeWidth={1.75} />
+            </button>
+          ) : (
+            <Link
+              href="/"
+              aria-label="Volver al inicio"
+              className="grid size-11 place-items-center rounded-full transition-colors hover:bg-card active:scale-95"
+            >
+              <ArrowLeft className="size-5" strokeWidth={1.75} />
+            </Link>
+          )}
+          <Link href="/" className="flex items-center justify-center gap-2" aria-label={`${BRAND_NAME}, inicio`}>
+            <Monogram className="size-7" />
+            <span className="text-xs font-bold tracking-[0.28em]">{BRAND_NAME}</span>
+          </Link>
+          <span aria-hidden />
         </div>
-        <h1 className="text-4xl font-bold mt-5 leading-none text-foreground">
-          {business.name || "Exclusive"}<br />
-          {business.name ? "" : "Barber Shop"}
-        </h1>
-        <StepProgress
-          current={stepIndex + 1}
-          total={STEPS.length}
-          label={STEPS[stepIndex]!.label}
-        />
+        <div className="flex items-center justify-between pb-3 pl-1">
+          <span className="text-xs font-semibold text-muted-foreground tabular-nums">
+            Paso {stepIndex + 1} de {STEPS.length}
+          </span>
+          <StepProgress current={stepIndex + 1} total={STEPS.length} label={current.label} />
+        </div>
       </header>
+
+      <div className="px-5 pt-3 pb-5">
+        <h1 key={step} className="mk-rise">
+          <span className="block text-[2rem] leading-[1.05] font-extrabold tracking-[-0.03em]">{current.title[0]}</span>
+          <span className="-mt-1 block font-script text-[2.75rem] leading-[1.15] text-primary">{current.title[1]}</span>
+        </h1>
+        {context.length > 0 && step !== "summary" && (
+          <p className="mt-2 text-sm text-muted-foreground">{context.join(" · ")}</p>
+        )}
+      </div>
 
       <AnimatePresence mode="popLayout" initial={false} custom={direction}>
         <motion.div
@@ -239,17 +333,19 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
           animate="center"
           exit="exit"
           transition={SPRING_SNAPPY}
+          className="flex flex-1 flex-col px-5 pb-10"
         >
           {step === "service" && (
-            <ServiceStep services={services} onSelect={handleSelectService} />
+            <ServiceStep
+              services={services}
+              selectedId={selectedService?.id ?? null}
+              onSelect={handleSelectService}
+              businessPhone={business.phone}
+            />
           )}
 
           {step === "barber" && (
-            <BarberStep
-              barbers={barbers}
-              onSelect={handleSelectBarber}
-              onBack={() => goTo("service", -1)}
-            />
+            <BarberStep barbers={barbers} selectedId={selectedBarber?.id ?? null} onSelect={handleSelectBarber} />
           )}
 
           {step === "schedule" && (
@@ -260,27 +356,43 @@ export function BookingWizard({ services, barbers, business, openDays, dates }: 
               selectedDateIsOpen={selectedDateIsOpen}
               onSelectDate={setSelectedDate}
               slots={slots}
+              pastBefore={pastBefore}
               loading={loadingSlots}
               failed={slotsFailed}
               onRetry={() => setSlotsRetry((n) => n + 1)}
               onSelectTime={handleSelectTime}
-              onBack={() => goTo("barber", -1)}
             />
           )}
 
-          {step === "details" && selectedService && selectedBarber && selectedTime && (
+          {step === "details" && (
             <DetailsStep
+              clientName={clientName}
+              clientPhone={clientPhone}
+              notes={notes}
+              onChangeName={setClientName}
+              onChangePhone={setClientPhone}
+              onChangeNotes={setNotes}
+              onContinue={() => goTo("summary", 1)}
+            />
+          )}
+
+          {step === "summary" && selectedService && selectedBarber && selectedTime && (
+            <SummaryStep
               service={selectedService}
               barber={selectedBarber}
               date={selectedDate}
               time={selectedTime}
-              clientName={clientName}
-              clientPhone={clientPhone}
-              onChangeName={setClientName}
-              onChangePhone={setClientPhone}
-              onSubmit={handleSubmit}
+              clientName={clientName.trim()}
+              clientPhone={clientPhone.trim()}
+              notes={notes.trim()}
+              error={submitError}
               isPending={isPending}
-              onBack={() => goTo("schedule", -1)}
+              onEdit={(target) => {
+                setSubmitError(null);
+                if (target === "schedule") setSlotsRetry((n) => n + 1);
+                goTo(target, -1);
+              }}
+              onSubmit={handleSubmit}
             />
           )}
         </motion.div>
@@ -295,87 +407,133 @@ function firstOpenDate(dates: string[], openDays: number[]): string {
   return dates.find((d) => open.has(getDayOfWeek(d))) ?? dates[0]!;
 }
 
-function ServiceStep({
-  services,
-  onSelect,
+const selectedRing = "ring-2 ring-primary ring-offset-2 ring-offset-background";
+
+function StateMessage({
+  icon: Icon,
+  children,
+  action,
 }: {
-  services: Service[];
-  onSelect: (s: Service) => void;
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  children: React.ReactNode;
+  action?: React.ReactNode;
 }) {
   return (
-    <div className="px-7 pb-9">
-      <div className="text-xs font-semibold tracking-widest uppercase mb-1 text-muted-foreground">
-        Servicio
-      </div>
-      {services.map((service, i) => (
-        <motion.button
-          key={service.id}
-          onClick={() => onSelect(service)}
-          whileTap={{ scale: TAP_SCALE }}
-          transition={SPRING_SNAPPY}
-          className={cn(
-            "w-full text-left flex justify-between items-baseline gap-4 py-5.5 min-h-11",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm",
-            i < services.length - 1 && "border-b border-border"
-          )}
-        >
-          <div>
-            <div className="text-base font-semibold text-foreground">
-              {service.name}
-            </div>
-            <div className="text-sm mt-1 text-muted-foreground">
-              {service.duration_minutes} min
-            </div>
-          </div>
-          <div className="text-xl font-bold text-foreground">
-            {formatPrice(service.price)}
-          </div>
-        </motion.button>
-      ))}
+    <div className="flex flex-col items-center gap-3 rounded-[20px] bg-card px-6 py-10 text-center">
+      <span className="grid size-12 place-items-center rounded-full bg-background text-primary">
+        <Icon className="size-5" strokeWidth={1.75} />
+      </span>
+      <p className="max-w-[28ch] text-sm leading-relaxed text-muted-foreground">{children}</p>
+      {action}
     </div>
+  );
+}
+
+function ServiceStep({
+  services,
+  selectedId,
+  onSelect,
+  businessPhone,
+}: {
+  services: Service[];
+  selectedId: string | null;
+  onSelect: (s: Service) => void;
+  businessPhone: string | null;
+}) {
+  if (services.length === 0) {
+    return (
+      <StateMessage
+        icon={CalendarX}
+        action={
+          businessPhone && (
+            <a
+              href={`https://wa.me/${toWhatsAppNumber(businessPhone)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 inline-flex min-h-11 items-center gap-2 rounded-full border border-border px-5 text-sm font-semibold hover:border-primary"
+            >
+              <MessageCircle className="size-4" strokeWidth={1.75} /> Escríbenos
+            </a>
+          )
+        }
+      >
+        Ahora mismo no hay servicios para reservar en línea. Escríbenos y te ayudamos.
+      </StateMessage>
+    );
+  }
+
+  return (
+    <ul className="flex flex-col gap-3">
+      {services.map((service, i) => (
+        <li key={service.id} className="mk-rise" style={{ "--mk-delay": `${i * 40}ms` } as React.CSSProperties}>
+          <button
+            type="button"
+            onClick={() => onSelect(service)}
+            aria-pressed={service.id === selectedId}
+            className={cn(serviceRowClasses, service.id === selectedId && selectedRing)}
+          >
+            <ServiceRowContent
+              name={service.name}
+              description={service.description}
+              durationMinutes={service.duration_minutes}
+              price={service.price}
+            />
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 
 function BarberStep({
   barbers,
+  selectedId,
   onSelect,
-  onBack,
 }: {
   barbers: Barber[];
+  selectedId: string | null;
   onSelect: (b: Barber) => void;
-  onBack: () => void;
 }) {
+  if (barbers.length === 0) {
+    return <StateMessage icon={CalendarX}>Hoy no hay barberos recibiendo reservas en línea. Vuelve a intentarlo más tarde.</StateMessage>;
+  }
+
+  const card =
+    "rounded-[20px] bg-card shadow-card transition-transform duration-200 ease-(--mk-ease-out) hover:-translate-y-0.5 active:scale-[0.98]";
+
   return (
-    <div className="px-7 pb-8">
-      <Button
-        onClick={onBack}
-        variant="ghost"
-        className="h-auto -mt-3 py-3 px-0 mb-1 text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
+    <div className="flex flex-col gap-3">
+      <button
+        type="button"
+        onClick={() => onSelect(ANY_BARBER)}
+        aria-pressed={selectedId === ANY_BARBER.id}
+        className={cn(card, "mk-rise flex items-center gap-4 p-4 text-left", selectedId === ANY_BARBER.id && selectedRing)}
       >
-        ← Servicios
-      </Button>
-      <div className="text-xs font-semibold tracking-widest uppercase mb-4 text-muted-foreground">
-        Barbero
-      </div>
-      <div className="flex gap-3.5">
-        {barbers.map((barber) => (
-          <motion.button
-            key={barber.id}
-            onClick={() => onSelect(barber)}
-            whileTap={{ scale: TAP_SCALE }}
-            transition={SPRING_SNAPPY}
-            className="flex-1 rounded-2xl p-5 text-center border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          >
-            <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center bg-border">
-              <svg width="24" height="24" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="8" r="4" className="stroke-foreground" strokeWidth="1.5" />
-                <path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6" className="stroke-foreground" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            </div>
-            <div className="text-base font-semibold text-foreground">{barber.name}</div>
-          </motion.button>
+        <span className="grid size-14 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
+          <Shuffle className="size-6" strokeWidth={1.75} />
+        </span>
+        <span className="flex-1">
+          <span className="block font-semibold">Cualquiera disponible</span>
+          <span className="mt-0.5 block text-sm text-muted-foreground">Más horarios: te asignamos quien esté libre.</span>
+        </span>
+        <ArrowRight aria-hidden className="size-5 text-muted-foreground" strokeWidth={1.75} />
+      </button>
+
+      <ul className="grid grid-cols-2 gap-3">
+        {barbers.map((barber, i) => (
+          <li key={barber.id} className="mk-rise" style={{ "--mk-delay": `${(i + 1) * 50}ms` } as React.CSSProperties}>
+            <button
+              type="button"
+              onClick={() => onSelect(barber)}
+              aria-pressed={selectedId === barber.id}
+              className={cn(card, "flex w-full flex-col items-center gap-3 px-3 pt-6 pb-5", selectedId === barber.id && selectedRing)}
+            >
+              <BarberAvatar name={barber.name} photoUrl={barber.photo_url} />
+              <span className="font-semibold">{barber.name}</span>
+            </button>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -387,11 +545,11 @@ function ScheduleStep({
   selectedDateIsOpen,
   onSelectDate,
   slots,
+  pastBefore,
   loading,
   failed,
   onRetry,
   onSelectTime,
-  onBack,
 }: {
   dates: string[];
   openDaySet: Set<number>;
@@ -399,119 +557,304 @@ function ScheduleStep({
   selectedDateIsOpen: boolean;
   onSelectDate: (d: string) => void;
   slots: string[];
+  pastBefore: string | null;
   loading: boolean;
   failed: boolean;
   onRetry: () => void;
   onSelectTime: (t: string) => void;
-  onBack: () => void;
 }) {
+  // A slot earlier than the server's cutoff already passed. Compare on "HH:MM" so the
+  // trailing ":SS" Postgres adds never affects the ordering.
+  const isPast = (time: string) => pastBefore !== null && time.slice(0, 5) < pastBefore;
+  const bookableCount = slots.filter((time) => !isPast(time)).length;
+
+  const bodyKey = !selectedDateIsOpen
+    ? "closed"
+    : loading
+      ? "loading"
+      : failed
+        ? "failed"
+        : bookableCount === 0
+          ? "empty"
+          : "slots";
+
+  // The 12:00–13:00 lunch is already dropped server-side; the hour filters keep the
+  // two stretches honest (and would hide a stray 12:xx slot if one ever leaked through).
+  // Past slots stay so the morning is visible on a same-day afternoon visit, struck out.
+  const slotsByPeriod = [
+    { label: "Mañana", list: slots.filter((t) => Number(t.slice(0, 2)) < 12) },
+    { label: "Tarde", list: slots.filter((t) => Number(t.slice(0, 2)) >= 13) },
+  ].filter((group) => group.list.length > 0);
+
+  const hasPast = pastBefore !== null && slots.some(isPast);
+
   return (
-    <div className="px-7 pb-8">
-      <Button
-        onClick={onBack}
-        variant="ghost"
-        className="h-auto -mt-3 py-3 px-0 mb-1 text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
-      >
-        ← Barbero
-      </Button>
-      <div className="text-xs font-semibold tracking-widest uppercase mb-4 text-muted-foreground">
-        Horario
-      </div>
-      <div className="flex gap-2 mb-3.5 overflow-x-auto pb-1">
+    <div>
+      <div role="group" aria-label="Fecha" className="-mx-5 flex gap-2 overflow-x-auto px-5 pb-2 [mask-image:linear-gradient(to_right,black_88%,transparent)] [scrollbar-width:none]">
         {dates.map((date, i) => {
           const isOpen = openDaySet.has(getDayOfWeek(date));
           const isSelected = date === selectedDate;
           return (
-            <motion.button
+            <button
               key={date}
+              type="button"
               onClick={() => isOpen && onSelectDate(date)}
               disabled={!isOpen}
-              whileTap={isOpen ? { scale: TAP_SCALE } : undefined}
-              transition={SPRING_SNAPPY}
-              aria-label={`${i === 0 ? "Hoy, " : ""}${formatDate(date)}${isOpen ? "" : ", cerrado"}`}
+              aria-pressed={isSelected}
+              aria-label={`${i === 0 ? "Hoy, " : ""}${formatLongDate(date)}${isOpen ? "" : ", cerrado"}`}
               className={cn(
-                "shrink-0 w-[4.5rem] min-h-14 px-2 py-2 rounded-lg flex flex-col items-center justify-center gap-0.5",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                "flex min-h-18 w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-2xl transition-colors duration-150 active:scale-95",
                 !isOpen
-                  ? "border border-dashed border-border text-muted-foreground cursor-not-allowed"
+                  ? "cursor-not-allowed border border-dashed border-border text-muted-foreground"
                   : isSelected
-                    ? "bg-foreground text-background"
-                    : "border border-border text-muted-foreground"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-card text-foreground hover:bg-(--mk-ink-raised)"
               )}
             >
-              <span className={cn("text-sm", isSelected ? "font-semibold" : "font-medium")}>
+              <span className={cn("text-xs", isSelected ? "font-bold" : "font-medium")}>
                 {i === 0 ? "Hoy" : formatWeekdayShort(date)}
               </span>
               {isOpen ? (
-                <span className="text-xs tabular-nums opacity-80">{formatDayNumber(date)}</span>
+                <span className="text-lg font-bold tabular-nums">{formatDayNumber(date)}</span>
               ) : (
-                <span className="text-[0.625rem] font-medium uppercase tracking-wider whitespace-nowrap">
-                  Cerrado
-                </span>
+                <span className="text-[0.625rem] font-semibold">Cerrado</span>
               )}
-            </motion.button>
+            </button>
           );
         })}
       </div>
 
-      {!selectedDateIsOpen ? (
-        <div className="text-sm py-8 text-center text-muted-foreground">
-          La barbería no abre este día. Elige otra fecha.
-        </div>
-      ) : loading ? (
-        <div className="grid grid-cols-4 gap-2">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="rounded-lg h-11 w-full" />
-          ))}
-        </div>
-      ) : failed ? (
-        <div className="py-8 text-center">
-          <div className="text-sm text-muted-foreground">
-            No pudimos cargar los horarios
-          </div>
-          <Button
-            onClick={onRetry}
-            variant="outline"
-            className="mt-3 h-11 rounded-lg px-5 text-sm font-medium"
+      <div className="mt-5" aria-live="polite" aria-busy={loading}>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={bodyKey}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
           >
-            Reintentar
-          </Button>
-        </div>
-      ) : slots.length === 0 ? (
-        <div className="text-sm py-8 text-center text-muted-foreground">
-          No hay horarios disponibles este día
-        </div>
+            {!selectedDateIsOpen ? (
+              <StateMessage icon={CalendarOff}>La barbería no abre este día. Elige otra fecha.</StateMessage>
+            ) : loading ? (
+              <div className="space-y-5">
+                <span className="sr-only">Cargando horarios…</span>
+                {[8, 4].map((n, g) => (
+                  <div key={g}>
+                    <div className="mb-3 h-4 w-20 animate-pulse rounded-full bg-card motion-reduce:animate-none" />
+                    <div className="grid grid-cols-4 gap-2">
+                      {Array.from({ length: n }).map((_, i) => (
+                        <div key={i} className="h-11 animate-pulse rounded-full bg-card motion-reduce:animate-none" />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : failed ? (
+              <StateMessage
+                icon={WifiOff}
+                action={
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="mt-1 min-h-11 rounded-full border border-border px-6 text-sm font-semibold hover:border-primary"
+                  >
+                    Reintentar
+                  </button>
+                }
+              >
+                No pudimos cargar los horarios. Revisa tu conexión e intenta de nuevo.
+              </StateMessage>
+            ) : bookableCount === 0 ? (
+              <StateMessage icon={CalendarX}>
+                {slots.length > 0
+                  ? "Por hoy ya no quedan horarios. Elige otra fecha."
+                  : "Este día ya está lleno. Prueba con otra fecha."}
+              </StateMessage>
+            ) : (
+              <div className="space-y-6">
+                {slotsByPeriod.map((group) => (
+                  <section key={group.label} aria-label={group.label}>
+                    <h2 className="mb-3 text-sm font-bold">{group.label}</h2>
+                    <div className="grid grid-cols-4 gap-2">
+                      {group.list.map((time) => {
+                        const past = isPast(time);
+                        return (
+                          <button
+                            key={time}
+                            type="button"
+                            onClick={() => onSelectTime(time)}
+                            disabled={past}
+                            aria-label={past ? `${formatTime(time)}, ya pasó` : formatTime(time)}
+                            className={cn(
+                              "min-h-11 rounded-full text-sm font-semibold tabular-nums transition-colors duration-150",
+                              past
+                                ? "cursor-not-allowed text-muted-foreground/70 line-through"
+                                : "bg-card hover:bg-primary hover:text-primary-foreground active:scale-95"
+                            )}
+                          >
+                            {formatTime(time)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ))}
+                {hasPast && <p className="text-xs text-muted-foreground">Los horarios tachados ya pasaron.</p>}
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+const inputClasses =
+  "w-full rounded-[14px] border border-border bg-card px-4 py-3.5 text-base text-foreground placeholder:text-muted-foreground/80 transition-colors focus:border-primary focus:outline-none focus-visible:outline-none aria-invalid:border-destructive";
+
+function Field({
+  id,
+  label,
+  hint,
+  error,
+  children,
+}: {
+  id: string;
+  label: string;
+  hint?: string;
+  error: string | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1.5 block text-sm font-semibold">
+        {label}
+      </label>
+      {children}
+      {error ? (
+        <p id={`${id}-msg`} className="mt-1.5 flex items-center gap-1.5 text-sm text-destructive">
+          <AlertCircle aria-hidden className="size-4 shrink-0" strokeWidth={2} />
+          {error}
+        </p>
       ) : (
-        <div className="grid grid-cols-4 gap-2">
-          {slots.map((time) => (
-            <motion.button
-              key={time}
-              onClick={() => onSelectTime(time)}
-              whileTap={{ scale: TAP_SCALE }}
-              transition={SPRING_SNAPPY}
-              className="rounded-lg py-3 min-h-11 text-center text-sm font-medium border border-border text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            >
-              {formatTime(time)}
-            </motion.button>
-          ))}
-        </div>
+        hint && (
+          <p id={`${id}-msg`} className="mt-1.5 text-xs text-muted-foreground">
+            {hint}
+          </p>
+        )
       )}
     </div>
   );
 }
 
 function DetailsStep({
+  clientName,
+  clientPhone,
+  notes,
+  onChangeName,
+  onChangePhone,
+  onChangeNotes,
+  onContinue,
+}: {
+  clientName: string;
+  clientPhone: string;
+  notes: string;
+  onChangeName: (v: string) => void;
+  onChangePhone: (v: string) => void;
+  onChangeNotes: (v: string) => void;
+  onContinue: () => void;
+}) {
+  const uid = useId();
+  const [touched, setTouched] = useState({ name: false, phone: false });
+  const nameValue = clientName.trim();
+  const phoneValue = clientPhone.trim();
+  const nameIsValid = nameValue.length >= 2;
+  const phoneIsValid = /^0\d{9}$/.test(phoneValue);
+  const nameError = touched.name && !nameIsValid ? "Escribe tu nombre para saber a quién esperamos." : null;
+  const phoneError =
+    touched.phone && !phoneIsValid ? "Tu celular va con 10 dígitos y empieza en 0, por ejemplo 0991234567." : null;
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setTouched({ name: true, phone: true });
+    if (nameIsValid && phoneIsValid) onContinue();
+  }
+
+  return (
+    <form noValidate onSubmit={handleSubmit} className="flex flex-1 flex-col">
+      <div className="space-y-5">
+        <Field id={`${uid}-name`} label="Nombre" error={nameError}>
+          <input
+            id={`${uid}-name`}
+            type="text"
+            autoComplete="name"
+            value={clientName}
+            maxLength={100}
+            onChange={(e) => onChangeName(e.target.value)}
+            onBlur={() => setTouched((t) => ({ ...t, name: true }))}
+            placeholder="Tu nombre y apellido"
+            aria-invalid={!!nameError}
+            aria-describedby={nameError ? `${uid}-name-msg` : undefined}
+            className={inputClasses}
+          />
+        </Field>
+        <Field id={`${uid}-phone`} label="Celular" hint="Solo para avisarte si hay un cambio." error={phoneError}>
+          <input
+            id={`${uid}-phone`}
+            type="tel"
+            inputMode="numeric"
+            autoComplete="tel"
+            value={clientPhone}
+            maxLength={10}
+            onChange={(e) => onChangePhone(e.target.value.replace(/\D/g, ""))}
+            onBlur={() => setTouched((t) => ({ ...t, phone: true }))}
+            placeholder="09XXXXXXXX"
+            aria-invalid={!!phoneError}
+            aria-describedby={`${uid}-phone-msg`}
+            className={cn(inputClasses, "tabular-nums")}
+          />
+        </Field>
+        <Field
+          id={`${uid}-notes`}
+          label="Notas (opcional)"
+          hint="Va en tu mensaje de WhatsApp y en el evento del calendario."
+          error={null}
+        >
+          <textarea
+            id={`${uid}-notes`}
+            value={notes}
+            maxLength={200}
+            rows={3}
+            onChange={(e) => onChangeNotes(e.target.value)}
+            placeholder="Ej.: quiero el degradado un poco más bajo"
+            aria-describedby={`${uid}-notes-msg`}
+            className={cn(inputClasses, "resize-none")}
+          />
+        </Field>
+      </div>
+
+      <div className="sticky bottom-0 mt-auto -mx-5 bg-linear-to-t from-background via-background to-transparent px-5 pt-8 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <button type="submit" className={cn(pillClasses, "w-full")}>
+          Continuar
+          <ArrowRight aria-hidden className="size-5" strokeWidth={2.25} />
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function SummaryStep({
   service,
   barber,
   date,
   time,
   clientName,
   clientPhone,
-  onChangeName,
-  onChangePhone,
-  onSubmit,
+  notes,
+  error,
   isPending,
-  onBack,
+  onEdit,
+  onSubmit,
 }: {
   service: Service;
   barber: Barber;
@@ -519,98 +862,88 @@ function DetailsStep({
   time: string;
   clientName: string;
   clientPhone: string;
-  onChangeName: (v: string) => void;
-  onChangePhone: (v: string) => void;
-  onSubmit: () => void;
+  notes: string;
+  error: string | null;
   isPending: boolean;
-  onBack: () => void;
+  onEdit: (step: Step) => void;
+  onSubmit: () => void;
 }) {
-  const nameValue = clientName.trim();
-  const phoneValue = clientPhone.trim();
-  const nameIsValid = nameValue.length >= 2;
-  const phoneIsValid = /^0\d{9}$/.test(phoneValue);
-  const isValid = nameIsValid && phoneIsValid;
-  const nameError = nameValue.length > 0 && !nameIsValid ? "Ingresa tu nombre completo" : null;
-  const phoneError =
-    phoneValue.length > 0 && !phoneIsValid ? "El teléfono va con 10 dígitos: 09XXXXXXXX" : null;
+  const rows: { label: string; value: string; detail?: string; step: Step }[] = [
+    { label: "Servicio", value: service.name, detail: `${service.duration_minutes} min`, step: "service" },
+    {
+      label: "Barbero",
+      value: barber.name,
+      detail: barber.id === ANY_BARBER.id ? "Te asignamos uno al confirmar" : undefined,
+      step: "barber",
+    },
+    { label: "Fecha y hora", value: formatLongDate(date), detail: formatTime(time), step: "schedule" },
+    { label: "Tus datos", value: clientName, detail: notes ? `${clientPhone} · ${notes}` : clientPhone, step: "details" },
+  ];
+  const slotTaken = error === SLOT_TAKEN_MESSAGE;
 
   return (
-    <div className="px-7 pb-8">
-      <Button
-        onClick={onBack}
-        variant="ghost"
-        className="h-auto -mt-3 py-3 px-0 mb-1 text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
-      >
-        ← Horario
-      </Button>
-
-      <div className="rounded-2xl p-5 mb-6 bg-surface">
-        <div className="text-base font-semibold text-foreground">{service.name}</div>
-        <div className="text-sm mt-1 text-muted-foreground">
-          {barber.name} · {formatDate(date)} · {formatTime(time)}
+    <div className="flex flex-1 flex-col">
+      <div className="mk-rise overflow-hidden rounded-[20px] bg-card shadow-card">
+        <dl className="divide-y divide-border">
+          {rows.map((row) => (
+            <div key={row.label} className="flex items-start gap-3 px-5 py-4">
+              <div className="min-w-0 flex-1">
+                <dt className="text-xs text-muted-foreground">{row.label}</dt>
+                <dd className="mt-0.5 font-semibold">{row.value}</dd>
+                {row.detail && <dd className="mt-0.5 text-sm break-words text-muted-foreground">{row.detail}</dd>}
+              </div>
+              <button
+                type="button"
+                onClick={() => onEdit(row.step)}
+                aria-label={`Cambiar ${row.label.toLowerCase()}`}
+                className="-mr-2 min-h-11 rounded-full px-3 text-sm font-semibold text-primary hover:underline hover:underline-offset-4"
+              >
+                Cambiar
+              </button>
+            </div>
+          ))}
+        </dl>
+        <div className="flex items-center justify-between border-t border-dashed border-border px-5 py-4">
+          <span className="text-sm text-muted-foreground">Total · pagas en el local</span>
+          <span className="text-2xl font-extrabold text-primary tabular-nums">{formatPrice(service.price)}</span>
         </div>
-        <div className="text-lg font-bold mt-2 text-foreground">{formatPrice(service.price)}</div>
       </div>
 
-      <div className="text-xs font-semibold tracking-widest uppercase mb-4 text-muted-foreground">
-        Tus datos
-      </div>
+      {error && (
+        <div role="alert" className="mt-4 flex items-start gap-3 rounded-[20px] border border-destructive/60 px-4 py-3.5 text-sm">
+          <AlertCircle aria-hidden className="mt-0.5 size-5 shrink-0 text-destructive" strokeWidth={1.75} />
+          <div className="flex-1">
+            <p className="font-semibold">{error}</p>
+            {slotTaken ? (
+              <button
+                type="button"
+                onClick={() => onEdit("schedule")}
+                className="mt-1 min-h-11 font-semibold text-primary underline underline-offset-4"
+              >
+                Ver horarios libres
+              </button>
+            ) : (
+              <p className="mt-0.5 text-muted-foreground">Tus datos siguen aquí; puedes intentarlo otra vez.</p>
+            )}
+          </div>
+        </div>
+      )}
 
-      <div className="space-y-4 mb-6">
-        <div>
-          <Label htmlFor="client-name" className="block text-sm mb-1.5 font-medium text-foreground">
-            Nombre
-          </Label>
-          <Input
-            id="client-name"
-            type="text"
-            autoComplete="name"
-            value={clientName}
-            onChange={(e) => onChangeName(e.target.value)}
-            placeholder="Tu nombre"
-            aria-invalid={!!nameError}
-            aria-describedby={nameError ? "client-name-error" : undefined}
-            className="h-auto w-full px-4 py-3 rounded-xl text-base bg-card"
-          />
-          {nameError && (
-            <p id="client-name-error" className="mt-1.5 text-sm text-destructive">
-              {nameError}
-            </p>
+      <div className="sticky bottom-0 mt-auto -mx-5 bg-linear-to-t from-background via-background to-transparent px-5 pt-8 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <button type="button" onClick={onSubmit} disabled={isPending} className={cn(pillClasses, "w-full")}>
+          {isPending ? (
+            <>
+              <Loader2 aria-hidden className="size-5 animate-spin" />
+              Reservando…
+            </>
+          ) : (
+            <>
+              Confirmar reserva
+              <ArrowRight aria-hidden className="size-5" strokeWidth={2.25} />
+            </>
           )}
-        </div>
-        <div>
-          <Label htmlFor="client-phone" className="block text-sm mb-1.5 font-medium text-foreground">
-            Teléfono
-          </Label>
-          <Input
-            id="client-phone"
-            type="tel"
-            inputMode="numeric"
-            autoComplete="tel"
-            value={clientPhone}
-            onChange={(e) => onChangePhone(e.target.value)}
-            placeholder="09XXXXXXXX"
-            aria-invalid={!!phoneError}
-            aria-describedby={phoneError ? "client-phone-error" : undefined}
-            className="h-auto w-full px-4 py-3 rounded-xl text-base bg-card"
-          />
-          {phoneError && (
-            <p id="client-phone-error" className="mt-1.5 text-sm text-destructive">
-              {phoneError}
-            </p>
-          )}
-        </div>
+        </button>
       </div>
-
-      <Button
-        onClick={onSubmit}
-        disabled={!isValid || isPending}
-        className="w-full h-auto rounded-2xl py-5 text-center cursor-pointer transition-transform active:scale-[0.98]"
-      >
-        <span className="text-base font-semibold">
-          {isPending ? "Reservando..." : "Confirmar reserva"}
-        </span>
-      </Button>
     </div>
   );
 }

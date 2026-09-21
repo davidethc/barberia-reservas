@@ -9,6 +9,8 @@ export const CreateAppointmentSchema = z.object({
   clientPhone: z.string().regex(/^0\d{9}$/, "Formato: 09XXXXXXXX"),
 });
 
+export const CreateAnyBarberAppointmentSchema = CreateAppointmentSchema.omit({ barberId: true });
+
 export const CompleteAppointmentSchema = z.object({
   appointmentId: z.string().uuid(),
   paymentMethod: z.enum(["cash", "transfer"]),

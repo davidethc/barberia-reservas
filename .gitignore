@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Artefactos de sesión (capturas de revisión, navegador de pruebas)
+.impeccable/
+.playwright-cli/

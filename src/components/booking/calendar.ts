@@ -1,5 +1,6 @@
 import { addMinutesToTime } from "@/lib/utils";
 import type { ConfirmedBooking } from "./types";
+import { BRAND_NAME } from "@/lib/brand";
 
 function escapeText(value: string): string {
   return value
@@ -31,7 +32,7 @@ export function buildCalendarEvent(
   business: { name: string; address: string | null }
 ): string {
   const end = addMinutesToTime(booking.time, booking.durationMinutes);
-  const shopName = business.name || "Exclusive Barber Shop";
+  const shopName = BRAND_NAME;
   const now = new Date()
     .toISOString()
     .replace(/[-:]/g, "")
@@ -40,11 +41,11 @@ export function buildCalendarEvent(
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//Exclusive Barber Shop//Reservas//ES",
+    "PRODID:-//MONKY BARBER//Reservas//ES",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     "BEGIN:VEVENT",
-    `UID:${booking.code}-${booking.date}@exclusive-barber`,
+    `UID:${booking.code}-${booking.date}@monky-barber`,
     `DTSTAMP:${now}`,
     // Floating local time on purpose: no TZID, so the phone reads it on its own
     // clock. The client is in the shop's city, and this avoids shipping a
@@ -53,7 +54,7 @@ export function buildCalendarEvent(
     `DTEND:${stamp(booking.date, end)}`,
     `SUMMARY:${escapeText(`${booking.serviceName} — ${shopName}`)}`,
     `DESCRIPTION:${escapeText(
-      `Barbero: ${booking.barberName}\nCódigo de reserva: ${booking.code}`
+      `Barbero: ${booking.barberName}\nCódigo de reserva: ${booking.code}${booking.notes ? `\nNota: ${booking.notes}` : ""}`
     )}`,
     business.address ? `LOCATION:${escapeText(business.address)}` : null,
     "STATUS:CONFIRMED",

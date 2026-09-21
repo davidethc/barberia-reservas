@@ -4,6 +4,8 @@ export type Service = {
   description: string | null;
   duration_minutes: number;
   price: number;
+  icon: string | null;
+  image_url: string | null;
 };
 
 export type Barber = {
@@ -31,6 +33,7 @@ export type ConfirmedBooking = {
   barberName: string;
   date: string;
   time: string;
+  notes?: string;
 };
 
 export function isConfirmedBooking(value: unknown): value is ConfirmedBooking {

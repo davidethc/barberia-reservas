@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Exclusive Barber Shop",
-  "short_name": "Exclusive Barber",
-  "description": "Reserva tu turno en Exclusive Barber Shop",
+  "name": "MONKY BARBER",
+  "short_name": "MONKY BARBER",
+  "description": "Reserva tu cita en MONKY BARBER",
   "lang": "es",
   "start_url": "/",
   "scope": "/",

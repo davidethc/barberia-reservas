@@ -1,12 +1,13 @@
 "use server";
 
-import { CreateAppointmentSchema } from "@/lib/schemas/booking";
+import { unstable_cache } from "next/cache";
+import { CreateAnyBarberAppointmentSchema, CreateAppointmentSchema } from "@/lib/schemas/booking";
 import { appointmentRepo } from "@/lib/repositories/appointments";
-import { barberRepo } from "@/lib/repositories/barbers";
-import { businessHoursRepo } from "@/lib/repositories/business-hours";
 import { addMinutesToTime } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
-import { BUSINESS_ID } from "@/lib/constants";
+import { createClient as createPublicClient } from "@/lib/supabase/client";
+import { BUSINESS_ID, LUNCH_END, LUNCH_START } from "@/lib/constants";
+import { BOOKING_DATA_TAG } from "@/lib/cache-tags";
 import {
   getShopDates,
   shopNowTime,
@@ -91,68 +92,152 @@ export async function createAppointment(
   return { success: true, data: { appointmentId } };
 }
 
-export async function getBookingData() {
-  const supabase = await createClient();
+/**
+ * Services, bookable barbers, business info and hours change rarely (an admin editing a
+ * panel), so they're cached across requests instead of hitting Postgres on every visit to
+ * the public wizard. `createPublicClient` (anon key, no session) is used here rather than
+ * the cookies()-based server client — `unstable_cache` cannot read cookies() inside its
+ * scope — which is fine since none of these reads are user-specific.
+ */
+const getCachedBookingData = unstable_cache(
+  async () => {
+    const supabase = createPublicClient();
 
-  const [{ data: services }, barbers, { data: business }, openDays] =
-    await Promise.all([
-      supabase
-        .from("services")
-        .select("*")
-        .eq("business_id", BUSINESS_ID)
-        .eq("is_active", true)
-        .order("sort_order"),
-      // Only barbers with an account: /agenda shows the signed-in barber's own day and
-      // nothing else, so a turn booked with an unlinked barber is one nobody can ever open.
-      // The filter has to happen in Postgres — `user_id` is not granted to the anon role.
-      barberRepo.getBookable().catch(() => []),
-      supabase
-        .from("businesses")
-        .select("name, phone, address")
-        .eq("id", BUSINESS_ID)
-        .single(),
-      getOpenDays(),
-    ]);
+    const [{ data: services }, { data: barbers }, { data: business }, { data: hours }] =
+      await Promise.all([
+        supabase
+          .from("services")
+          .select("*")
+          .eq("business_id", BUSINESS_ID)
+          .eq("is_active", true)
+          .order("sort_order"),
+        // Only barbers with an account: /agenda shows the signed-in barber's own day and
+        // nothing else, so a turn booked with an unlinked barber is one nobody can ever open.
+        // The filter has to happen in Postgres — `user_id` is not granted to the anon role.
+        supabase.rpc("public_bookable_barbers", { p_business_id: BUSINESS_ID }),
+        supabase
+          .from("businesses")
+          .select("name, phone, address")
+          .eq("id", BUSINESS_ID)
+          .single(),
+        supabase
+          .from("business_hours")
+          .select("day_of_week, is_open, open_time, close_time")
+          .eq("business_id", BUSINESS_ID)
+          .order("day_of_week"),
+      ]);
+
+    return {
+      services: services ?? [],
+      barbers: barbers ?? [],
+      business: business ?? { name: "", phone: "", address: "" },
+      // Fails open: if the hours can't be read we offer every day rather than hiding
+      // days the shop is actually working.
+      openDays: hours ? hours.filter((h) => h.is_open).map((h) => h.day_of_week) : [0, 1, 2, 3, 4, 5, 6],
+      hours: hours ?? [],
+    };
+  },
+  ["public-booking-data-v2"],
+  { revalidate: 45, tags: [BOOKING_DATA_TAG] }
+);
+
+export async function getBookingData() {
+  const cached = await getCachedBookingData();
 
   return {
-    services: services ?? [],
-    barbers,
-    business: business ?? { name: "", phone: "", address: "" },
-    openDays,
-    // Resolved on the shop's clock here rather than in the browser, so the
-    // strip means the same thing on the server render and after hydration.
+    ...cached,
+    // Resolved on the shop's clock here rather than in the browser, and outside the cache
+    // since it depends on "now" — the strip means the same thing on the server render and
+    // after hydration.
     dates: getShopDates(DAYS_OFFERED),
   };
 }
 
 /**
- * Weekdays (0 = Sunday) the shop opens. Fails open: if the hours can't be read
- * we offer every day rather than hiding days the shop is actually working.
+ * A turn belongs to a stretch only if all of its minutes do. Half-open, so a service
+ * ending exactly at 12:00 counts as morning and one starting exactly at 13:00 as afternoon.
  */
-async function getOpenDays(): Promise<number[]> {
-  try {
-    const hours = await businessHoursRepo.getAll();
-    return (hours ?? [])
-      .filter((h) => h.is_open)
-      .map((h) => h.day_of_week);
-  } catch {
-    return [0, 1, 2, 3, 4, 5, 6];
-  }
+function crossesLunch(startTime: string, durationMinutes: number): boolean {
+  const endTime = addMinutesToTime(startTime, durationMinutes);
+  return startTime < LUNCH_END && endTime > LUNCH_START;
+}
+
+/** The availability function knows the business hours but not the lunch break, so the break is carved out here. */
+async function bookableSlots(barberId: string, date: string, durationMinutes: number): Promise<string[]> {
+  const slots = await appointmentRepo.getAvailableSlots(barberId, date, durationMinutes);
+  return slots.filter((slot) => !crossesLunch(slot, durationMinutes));
+}
+
+async function bookableBarberIds(): Promise<string[]> {
+  const { barbers } = await getCachedBookingData();
+  return barbers.map((b: { id: string }) => b.id);
 }
 
 export async function getAvailableSlots(
   barberId: string,
   date: string,
   durationMinutes: number
-) {
-  const slots = await appointmentRepo.getAvailableSlots(
-    barberId,
-    date,
-    durationMinutes
-  );
+): Promise<{ slots: string[]; pastBefore: string | null }> {
+  const bookable = await bookableSlots(barberId, date, durationMinutes);
 
-  // Offering a slot that already passed is a guaranteed dead end for the client.
-  if (date !== shopToday()) return slots;
-  const cutoff = addMinutesToTime(shopNowTime(), LEAD_MINUTES);
-  return slots.filter((slot) => slot >= cutoff);
+  // Slots that already passed stay in the payload instead of being dropped: the wizard
+  // shows the whole day and strikes them through. Hiding them made a same-day afternoon
+  // read as if the shop never opened in the morning. `pastBefore` is the server's clock,
+  // so the client never has to trust its own. The RPC still rejects a too-soon booking.
+  const pastBefore =
+    date === shopToday() ? addMinutesToTime(shopNowTime(), LEAD_MINUTES) : null;
+
+  return { slots: bookable, pastBefore };
+}
+
+/** "Cualquiera disponible": a slot is offered when at least one bookable barber has it free. */
+export async function getAnyBarberSlots(
+  date: string,
+  durationMinutes: number
+): Promise<{ slots: string[]; pastBefore: string | null }> {
+  const ids = await bookableBarberIds();
+  const perBarber = await Promise.all(ids.map((id) => bookableSlots(id, date, durationMinutes)));
+  const slots = [...new Set(perBarber.flat())].sort();
+  const pastBefore =
+    date === shopToday() ? addMinutesToTime(shopNowTime(), LEAD_MINUTES) : null;
+  return { slots, pastBefore };
+}
+
+/**
+ * Books with whichever barber is free at that time. Candidates are shuffled so "any" spreads
+ * turns across the team instead of always filling the first barber; a candidate who loses the
+ * slot to a concurrent booking is skipped and the next one is tried.
+ */
+export async function createAppointmentAnyBarber(
+  input: unknown
+): Promise<ActionResult<{ appointmentId: string; barberId: string }>> {
+  const parsed = CreateAnyBarberAppointmentSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: "Datos inválidos" };
+  }
+  const { serviceId, date, startTime, clientName, clientPhone } = parsed.data;
+
+  const { services } = await getCachedBookingData();
+  const service = services.find((s: { id: string }) => s.id === serviceId);
+  if (!service) return { success: false, error: BOOKING_ERROR_MESSAGES.BOOKING_SERVICE_NOT_FOUND! };
+
+  const ids = await bookableBarberIds();
+  const free = (
+    await Promise.all(
+      ids.map(async (id) => ((await bookableSlots(id, date, service.duration_minutes)).some((s) => s.slice(0, 5) === startTime) ? id : null))
+    )
+  ).filter((id): id is string => id !== null);
+
+  for (let i = free.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [free[i], free[j]] = [free[j]!, free[i]!];
+  }
+
+  for (const barberId of free) {
+    const result = await createAppointment({ serviceId, barberId, date, startTime, clientName, clientPhone });
+    if (result.success) return { success: true, data: { appointmentId: result.data.appointmentId, barberId } };
+    if (result.error !== BOOKING_ERROR_MESSAGES.BOOKING_SLOT_TAKEN) return result;
+  }
+
+  return { success: false, error: BOOKING_ERROR_MESSAGES.BOOKING_SLOT_TAKEN! };
 }

@@ -15,8 +15,8 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "Exclusive Barber Shop",
-  description: "Reserva tu turno en Exclusive Barber Shop - Milagro, Ecuador",
+  title: "MONKY BARBER",
+  description: "Reserva tu cita en MONKY BARBER - Milagro, Ecuador",
   manifest: "/manifest.json",
   // iOS ignores the manifest's icons; the home-screen icon comes from here.
   icons: {
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Exclusive Barber",
+    title: "MONKY BARBER",
   },
 };
 
