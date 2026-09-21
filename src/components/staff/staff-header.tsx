@@ -33,7 +33,7 @@ export function StaffHeader({ isAdmin = false }: { isAdmin?: boolean }) {
             <Link
               href="/agenda"
               className={cn(
-                "flex h-11 items-center rounded-md px-3 text-sm font-medium transition-colors",
+                "flex h-11 items-center rounded-md px-3 text-sm font-medium transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                 pathname?.startsWith("/agenda")
                   ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -45,7 +45,7 @@ export function StaffHeader({ isAdmin = false }: { isAdmin?: boolean }) {
               <Link
                 href="/admin"
                 className={cn(
-                  "flex h-11 items-center rounded-md px-3 text-sm font-medium transition-colors",
+                  "flex h-11 items-center rounded-md px-3 text-sm font-medium transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                   pathname?.startsWith("/admin")
                     ? "bg-muted text-foreground"
                     : "text-muted-foreground hover:text-foreground"
@@ -62,7 +62,7 @@ export function StaffHeader({ isAdmin = false }: { isAdmin?: boolean }) {
           onClick={handleSignOut}
           disabled={isPending}
         >
-          {isPending ? "Saliendo..." : "Salir"}
+          {isPending ? "Saliendo…" : "Salir"}
         </Button>
       </div>
     </header>

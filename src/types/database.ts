@@ -348,7 +348,9 @@ export type Database = {
           business_id: string
           description: string | null
           duration_minutes: number
+          icon: string | null
           id: string
+          image_url: string | null
           is_active: boolean | null
           name: string
           price: number
@@ -358,7 +360,9 @@ export type Database = {
           business_id: string
           description?: string | null
           duration_minutes: number
+          icon?: string | null
           id?: string
+          image_url?: string | null
           is_active?: boolean | null
           name: string
           price: number
@@ -368,7 +372,9 @@ export type Database = {
           business_id?: string
           description?: string | null
           duration_minutes?: number
+          icon?: string | null
           id?: string
+          image_url?: string | null
           is_active?: boolean | null
           name?: string
           price?: number

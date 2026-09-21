@@ -5,11 +5,20 @@ export const ServiceInputSchema = z.object({
   description: z.string().trim().max(500).optional().nullable(),
   durationMinutes: z.number().int().positive("Debe ser mayor a 0"),
   price: z.number().nonnegative("No puede ser negativo"),
+  icon: z.string().trim().min(1, "Elige un emoji").max(16).nullable().optional(),
 });
 
 export const CreateServiceSchema = ServiceInputSchema;
 export const UpdateServiceSchema = ServiceInputSchema.extend({
   id: z.string().uuid(),
+});
+
+export const UploadServiceImageSchema = z.object({
+  serviceId: z.string().uuid(),
+});
+
+export const RemoveServiceImageSchema = z.object({
+  serviceId: z.string().uuid(),
 });
 
 export const ReorderServicesSchema = z.object({

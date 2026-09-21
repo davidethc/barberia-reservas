@@ -21,7 +21,7 @@ export function ConfirmDialog({
   description,
   confirmLabel,
   cancelLabel = "Volver",
-  pendingLabel = "Guardando...",
+  pendingLabel = "Guardando…",
   tone = "destructive",
   isPending = false,
   onConfirm,

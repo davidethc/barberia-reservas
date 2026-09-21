@@ -44,6 +44,22 @@ export const appointmentRepo = {
     return data;
   },
 
+  /** Same shape as `getForAgenda`, but for the week/month calendar views. */
+  async getForRange(barberId: string, from: string, to: string) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("*, services(name, duration_minutes, price), clients(name, phone)")
+      .eq("barber_id", barberId)
+      .gte("date", from)
+      .lte("date", to)
+      .order("date")
+      .order("start_time");
+
+    if (error) throw error;
+    return data;
+  },
+
   /**
    * Active appointments a time range would cover. Half-open overlap (`start < rangeEnd`
    * and `end > rangeStart`) so a turn ending exactly when the range starts is not a

@@ -1,10 +1,11 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { BUSINESS_ID } from "@/lib/constants";
+import { BOOKING_DATA_TAG } from "@/lib/cache-tags";
 import { isCurrentUserAdmin } from "@/lib/staff";
 import { serviceRepo } from "@/lib/repositories/services";
 import { barberRepo } from "@/lib/repositories/barbers";
@@ -21,6 +22,8 @@ import {
   UpdateServiceSchema,
   ReorderServicesSchema,
   ToggleActiveSchema,
+  UploadServiceImageSchema,
+  RemoveServiceImageSchema,
   UpdateBarberSchema,
   LinkBarberAccountSchema,
   UnlinkBarberAccountSchema,
@@ -72,6 +75,7 @@ export async function createService(input: unknown): Promise<ActionResult<{ id: 
   try {
     const service = await serviceRepo.create(parsed.data);
     revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
     return { success: true, data: { id: service.id } };
   } catch {
     return { success: false, error: "No se pudo crear el servicio" };
@@ -88,6 +92,7 @@ export async function updateService(input: unknown): Promise<ActionResult<{ id: 
     const { id, ...data } = parsed.data;
     await serviceRepo.update(id, data);
     revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
     return { success: true, data: { id } };
   } catch {
     return { success: false, error: "No se pudo actualizar el servicio" };
@@ -103,6 +108,7 @@ export async function toggleServiceActive(input: unknown): Promise<ActionResult<
   try {
     await serviceRepo.setActive(parsed.data.id, parsed.data.isActive);
     revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
     return { success: true, data: { id: parsed.data.id } };
   } catch {
     return { success: false, error: "No se pudo actualizar el servicio" };
@@ -118,9 +124,105 @@ export async function reorderServices(input: unknown): Promise<ActionResult<null
   try {
     await serviceRepo.reorder(parsed.data.orderedIds);
     revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
     return { success: true, data: null };
   } catch {
     return { success: false, error: "No se pudo reordenar los servicios" };
+  }
+}
+
+// ---------- Service images ----------
+
+const SERVICE_IMAGE_MIME_TYPES: Record<string, { ext: string; label: string }> = {
+  "image/png": { ext: "png", label: "PNG" },
+  "image/jpeg": { ext: "jpg", label: "JPG" },
+  "image/jpg": { ext: "jpg", label: "JPG" },
+  "image/webp": { ext: "webp", label: "WebP" },
+  "image/avif": { ext: "avif", label: "AVIF" },
+};
+
+const SERVICE_IMAGE_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
+
+function imageStoragePathFromUrl(imageUrl: string): string | null {
+  const marker = "/object/public/service-images/";
+  const index = imageUrl.indexOf(marker);
+  return index === -1 ? null : imageUrl.slice(index + marker.length);
+}
+
+/**
+ * Sube la foto de un servicio a Storage con la service-role key (saltea RLS) y guarda la
+ * URL pública en `services.image_url`. Recibe FormData porque lleva un File adjunto.
+ */
+export async function uploadServiceImage(
+  formData: FormData
+): Promise<ActionResult<{ imageUrl: string }>> {
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
+
+  const file = formData.get("file");
+  if (!(file instanceof File)) return { success: false, error: "Falta la imagen" };
+
+  const parsed = UploadServiceImageSchema.safeParse({
+    serviceId: formData.get("serviceId"),
+  });
+  if (!parsed.success) return { success: false, error: "Datos inválidos" };
+
+  const allowed = SERVICE_IMAGE_MIME_TYPES[file.type];
+  if (!allowed) {
+    return { success: false, error: "Formato no permitido. Usa PNG, JPG, WebP o AVIF." };
+  }
+  if (file.size > SERVICE_IMAGE_MAX_BYTES) {
+    return { success: false, error: "La imagen pesa más de 2 MB." };
+  }
+
+  try {
+    const serviceId = parsed.data.serviceId;
+    const admin = createAdminClient();
+
+    // Si el servicio ya tenía foto, borra el objeto viejo para no acumular archivos.
+    const current = await serviceRepo.getById(serviceId);
+    if (current?.image_url) {
+      const oldPath = imageStoragePathFromUrl(current.image_url);
+      if (oldPath) await admin.storage.from("service-images").remove([oldPath]);
+    }
+
+    const path = `${serviceId}-${Date.now()}.${allowed.ext}`;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const { error: uploadError } = await admin.storage
+      .from("service-images")
+      .upload(path, bytes, { contentType: file.type, cacheControl: "3600" });
+    if (uploadError) throw uploadError;
+
+    const imageUrl = admin.storage.from("service-images").getPublicUrl(path).data.publicUrl;
+    await serviceRepo.uploadImage(serviceId, imageUrl);
+
+    revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
+    return { success: true, data: { imageUrl } };
+  } catch {
+    return { success: false, error: "No se pudo subir la imagen" };
+  }
+}
+
+export async function removeServiceImage(input: unknown): Promise<ActionResult<null>> {
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
+
+  const parsed = RemoveServiceImageSchema.safeParse(input);
+  if (!parsed.success) return { success: false, error: "Datos inválidos" };
+
+  try {
+    const admin = createAdminClient();
+    const current = await serviceRepo.getById(parsed.data.serviceId);
+    if (current?.image_url) {
+      const oldPath = imageStoragePathFromUrl(current.image_url);
+      if (oldPath) await admin.storage.from("service-images").remove([oldPath]);
+    }
+    await serviceRepo.removeImage(parsed.data.serviceId);
+
+    revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
+    return { success: true, data: null };
+  } catch {
+    return { success: false, error: "No se pudo quitar la imagen" };
   }
 }
 
@@ -136,6 +238,7 @@ export async function updateBarber(input: unknown): Promise<ActionResult<{ id: s
     const { id, ...data } = parsed.data;
     await barberRepo.update(id, { ...data, photoUrl: data.photoUrl || null });
     revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
     return { success: true, data: { id } };
   } catch {
     return { success: false, error: "No se pudo actualizar el barbero" };
@@ -151,6 +254,7 @@ export async function toggleBarberActive(input: unknown): Promise<ActionResult<{
   try {
     await barberRepo.setActive(parsed.data.id, parsed.data.isActive);
     revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
     return { success: true, data: { id: parsed.data.id } };
   } catch {
     return { success: false, error: "No se pudo actualizar el barbero" };
@@ -197,6 +301,7 @@ export async function linkBarberAccount(
   try {
     const userId = await barberRepo.linkAccount(parsed.data.barberId, parsed.data.email);
     revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
     return { success: true, data: { id: parsed.data.barberId, userId } };
   } catch (error) {
     return { success: false, error: linkErrorMessage(error, "No se pudo vincular la cuenta") };
@@ -212,6 +317,7 @@ export async function unlinkBarberAccount(input: unknown): Promise<ActionResult<
   try {
     await barberRepo.unlinkAccount(parsed.data.barberId);
     revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
     return { success: true, data: { id: parsed.data.barberId } };
   } catch (error) {
     return { success: false, error: linkErrorMessage(error, "No se pudo desvincular la cuenta") };
@@ -320,6 +426,7 @@ export async function createBarberWithAccount(
     });
 
     revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
     return { success: true, data: { id: barber.id, email, userId: created.user.id } };
   } catch {
     // Sin esto el correo queda ocupado por una cuenta que el admin no ve en ningún lado,
@@ -376,6 +483,7 @@ export async function updateBusinessHours(input: unknown): Promise<ActionResult<
   try {
     await businessHoursRepo.update(parsed.data.dayOfWeek, parsed.data);
     revalidatePath("/admin");
+    updateTag(BOOKING_DATA_TAG);
     return { success: true, data: null };
   } catch {
     return { success: false, error: "No se pudo actualizar el horario" };

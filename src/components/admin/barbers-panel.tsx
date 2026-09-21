@@ -103,7 +103,7 @@ export function BarbersPanel({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">Barberos</h2>
+        <h2 className="font-heading text-lg font-semibold">Barberos</h2>
         <Button onClick={() => setCreating(true)} className="h-11 sm:h-8">
           <Plus className="size-4" />
           Nuevo barbero

@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import {
   createService,
   updateService,
   toggleServiceActive,
   reorderServices,
+  uploadServiceImage,
+  removeServiceImage,
 } from "@/app/actions/admin";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,10 +26,16 @@ import {
 } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/staff/confirm-dialog";
 import { formatPrice } from "@/lib/utils";
-import { ArrowUp, ArrowDown, Plus, Pencil, Scissors } from "lucide-react";
+import { ArrowUp, ArrowDown, Plus, Pencil, Scissors, Upload, Trash2 } from "lucide-react";
 import type { Database } from "@/types/database";
 
 type Service = Database["public"]["Tables"]["services"]["Row"];
+
+const SERVICE_EMOJIS = ["💈", "✂️", "🪒", "🧔", "💇", "🙍", "🧖", "🫧", "💆", "👑", "🕶️", "🧢", "⭐", "🦳", "💯", "🌿"];
+
+const DEFAULT_SERVICE_ICON = "💈";
+
+const SERVICE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 
 export function ServicesPanel({ initialServices }: { initialServices: Service[] }) {
   const [services, setServices] = useState(initialServices);
@@ -87,10 +95,16 @@ export function ServicesPanel({ initialServices }: { initialServices: Service[] 
     setCreating(false);
   }
 
+  function handleImageUrlChange(serviceId: string, imageUrl: string | null) {
+    setServices((prev) =>
+      prev.map((s) => (s.id === serviceId ? { ...s, image_url: imageUrl } : s))
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">Servicios</h2>
+        <h2 className="font-heading text-lg font-semibold">Servicios</h2>
         <Button onClick={() => setCreating(true)} className="h-11 sm:h-8">
           <Plus className="size-4" />
           Nuevo servicio
@@ -157,6 +171,7 @@ export function ServicesPanel({ initialServices }: { initialServices: Service[] 
           }
         }}
         onSaved={handleSaved}
+        onImageUrlChange={handleImageUrlChange}
         nextSortOrder={services.length}
       />
     </div>
@@ -184,6 +199,7 @@ function ServiceRow({
 }) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center sm:gap-4">
+      <ServiceThumb service={service} className="size-11 rounded-lg" />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium">{service.name}</span>
@@ -245,18 +261,23 @@ function ServiceFormDialog({
   open,
   onOpenChange,
   onSaved,
+  onImageUrlChange,
   nextSortOrder,
 }: {
   service: Service | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: (service: Service, isNew: boolean) => void;
+  onImageUrlChange: (serviceId: string, imageUrl: string | null) => void;
   nextSortOrder: number;
 }) {
   const [name, setName] = useState(service?.name ?? "");
   const [description, setDescription] = useState(service?.description ?? "");
   const [duration, setDuration] = useState(String(service?.duration_minutes ?? 30));
   const [price, setPrice] = useState(String(service?.price ?? ""));
+  const [icon, setIcon] = useState(service?.icon ?? DEFAULT_SERVICE_ICON);
+  const [photoUrl, setPhotoUrl] = useState(service?.image_url ?? null);
+  const [photoPending, setPhotoPending] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const isValid = name.trim().length >= 2 && Number(duration) > 0 && Number(price) >= 0;
@@ -270,6 +291,7 @@ function ServiceFormDialog({
         description: description.trim() || null,
         durationMinutes: Number(duration),
         price: Number(price),
+        icon,
       };
 
       const result = service
@@ -286,6 +308,8 @@ function ServiceFormDialog({
             description: payload.description,
             duration_minutes: payload.durationMinutes,
             price: payload.price,
+            icon: payload.icon,
+            image_url: service?.image_url ?? null,
             is_active: service?.is_active ?? true,
             sort_order: service?.sort_order ?? nextSortOrder,
           },
@@ -295,6 +319,54 @@ function ServiceFormDialog({
         toast.error(result.error);
       }
     });
+  }
+
+  async function handlePhotoSelected(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !service) return;
+
+    if (!/^image\/(png|jpeg|jpg|webp|avif)$/.test(file.type)) {
+      toast.error("Formato no permitido. Usa PNG, JPG, WebP o AVIF.");
+      return;
+    }
+    if (file.size > SERVICE_IMAGE_MAX_BYTES) {
+      toast.error("La imagen pesa más de 2 MB.");
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append("serviceId", service.id);
+    fd.append("file", file);
+
+    setPhotoPending(true);
+    setPhotoUrl(URL.createObjectURL(file));
+    const result = await uploadServiceImage(fd);
+    setPhotoPending(false);
+
+    if (result.success) {
+      toast.success("Foto actualizada");
+      setPhotoUrl(result.data.imageUrl);
+      onImageUrlChange(service.id, result.data.imageUrl);
+    } else {
+      toast.error(result.error);
+      setPhotoUrl(service.image_url ?? null);
+    }
+  }
+
+  async function handleRemovePhoto() {
+    if (!service) return;
+    setPhotoPending(true);
+    const result = await removeServiceImage({ serviceId: service.id });
+    setPhotoPending(false);
+
+    if (result.success) {
+      toast.success("Foto quitada");
+      setPhotoUrl(null);
+      onImageUrlChange(service.id, null);
+    } else {
+      toast.error(result.error);
+    }
   }
 
   return (
@@ -328,6 +400,30 @@ function ServiceFormDialog({
               rows={2}
             />
           </div>
+          <div className="space-y-1.5">
+            <Label>Emoji</Label>
+            <p className="text-sm text-muted-foreground">
+              Se muestra en la web mientras el servicio no tenga foto.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {SERVICE_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => setIcon(emoji)}
+                  aria-pressed={icon === emoji}
+                  aria-label={`Emoji ${emoji}`}
+                  className={`flex size-11 items-center justify-center rounded-xl border text-xl transition-colors ${
+                    icon === emoji
+                      ? "border-accent bg-accent/10"
+                      : "border-border bg-surface hover:border-accent/60"
+                  }`}
+                >
+                  <span aria-hidden="true">{emoji}</span>
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="service-duration">Duración (min)</Label>
@@ -355,6 +451,44 @@ function ServiceFormDialog({
               />
             </div>
           </div>
+          <div className="space-y-1.5">
+            <Label>Foto</Label>
+            {service ? (
+              <div className="flex items-center gap-3 rounded-xl border border-border bg-surface p-3">
+                <ServicePreview photoUrl={photoUrl} icon={icon} />
+                <div className="flex flex-col items-start gap-2">
+                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-foreground transition-colors hover:border-accent/60">
+                    <Upload className="size-4" aria-hidden="true" />
+                    {photoPending ? "Subiendo..." : "Subir foto"}
+                    <Input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/avif"
+                      className="sr-only"
+                      disabled={photoPending}
+                      onChange={handlePhotoSelected}
+                    />
+                  </label>
+                  {photoUrl && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-auto px-2 py-1 text-sm text-destructive hover:text-destructive"
+                      disabled={photoPending}
+                      onClick={handleRemovePhoto}
+                    >
+                      <Trash2 className="size-4" aria-hidden="true" />
+                      Quitar foto
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="rounded-xl border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+                Guardá el servicio primero y después podés subirle la foto desde esta misma
+                ficha.
+              </p>
+            )}
+          </div>
         </div>
 
         <DialogFooter>
@@ -368,5 +502,58 @@ function ServiceFormDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ServiceThumb({ service, className }: { service: Service; className?: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (service.image_url && !failed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- foto del servicio, host arbitrario (Storage o URL externa).
+      <img
+        src={service.image_url}
+        alt=""
+        loading="lazy"
+        onError={() => setFailed(true)}
+        className={`shrink-0 object-cover ring-1 ring-border ${className ?? ""}`}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`flex shrink-0 items-center justify-center bg-surface ring-1 ring-border ${
+        className ?? ""
+      }`}
+      aria-hidden="true"
+    >
+      <span className="text-xl leading-none">{service.icon ?? DEFAULT_SERVICE_ICON}</span>
+    </div>
+  );
+}
+
+function ServicePreview({ photoUrl, icon }: { photoUrl: string | null; icon: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (photoUrl && !failed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- preview local del archivo o foto de Storage.
+      <img
+        src={photoUrl}
+        alt=""
+        onError={() => setFailed(true)}
+        className="size-16 shrink-0 rounded-xl object-cover ring-1 ring-border"
+      />
+    );
+  }
+
+  return (
+    <div
+      className="flex size-16 shrink-0 items-center justify-center rounded-xl bg-surface ring-1 ring-border"
+      aria-hidden="true"
+    >
+      <span className="text-2xl leading-none">{icon}</span>
+    </div>
   );
 }

@@ -71,6 +71,13 @@ export function getShopDates(count: number, at: Date = new Date()): string[] {
   return dates;
 }
 
+/** Moves a shop date by `days`, anchored at UTC noon so the arithmetic never crosses a boundary. */
+export function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 /** 0 = Sunday, matching `business_hours.day_of_week`. */
 export function getDayOfWeek(dateStr: string): number {
   return new Date(dateStr + "T12:00:00Z").getUTCDay();
@@ -89,4 +96,35 @@ export function formatLongDate(dateStr: string): string {
   const day = Number(dateStr.slice(8, 10));
   const month = Number(dateStr.slice(5, 7));
   return `${DAY_NAMES[getDayOfWeek(dateStr)]} ${day} de ${MONTHS_LONG[month - 1]}`;
+}
+
+/**
+ * UTC bounds of a shop-local day, so a query can slice `created_at` (stored in UTC)
+ * the same way the reports group by `(created_at AT TIME ZONE 'America/Guayaquil')::date`.
+ */
+export function getLocalDayWindow(dateStr: string): { from: string; to: string } {
+  const year = Number(dateStr.slice(0, 4));
+  const month = Number(dateStr.slice(5, 7));
+  const day = Number(dateStr.slice(8, 10));
+
+  const offsetMs = (() => {
+    const guess = Date.UTC(year, month - 1, day, 12);
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: SHOP_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(guess));
+    const get = (t: Intl.DateTimeFormatPartTypes) =>
+      Number(parts.find((p) => p.type === t)?.value ?? 0);
+    return Date.UTC(get("year"), get("month") - 1, get("day"), get("hour")) - guess;
+  })();
+
+  const from = Date.UTC(year, month - 1, day) - offsetMs;
+  return {
+    from: new Date(from).toISOString(),
+    to: new Date(from + 86_400_000).toISOString(),
+  };
 }

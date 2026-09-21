@@ -17,7 +17,7 @@ export function HoursPanel({ initialHours }: { initialHours: BusinessHours[] }) 
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Horario de atención</h2>
+      <h2 className="font-heading text-lg font-semibold">Horario de atención</h2>
 
       {days.length === 0 ? (
         <div className="flex flex-col items-center rounded-xl border border-dashed border-border px-4 py-12 text-center">

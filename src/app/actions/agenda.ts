@@ -10,6 +10,7 @@ import { CompleteAppointmentSchema, CancelAppointmentSchema } from "@/lib/schema
 import { CreateBlockSchema, DeleteBlockSchema } from "@/lib/schemas/schedule";
 import { canTransition, type ActionResult, type AppointmentStatus } from "@/lib/appointment-states";
 import { formatTime } from "@/lib/utils";
+import { addDays, getLocalDayWindow } from "@/lib/shop-date";
 
 export type AgendaAppointment = {
   id: string;
@@ -30,9 +31,17 @@ export type AgendaBlock = {
   end_time: string;
 };
 
+export type DaySummary = {
+  turnos: number;
+  cobrado: number;
+  comision: number;
+  teQueda: number;
+};
+
 export type AgendaDay = {
   appointments: AgendaAppointment[];
   blocks: AgendaBlock[];
+  summary: DaySummary;
 };
 
 export async function getAgendaForDate(date: string): Promise<ActionResult<AgendaDay>> {
@@ -45,18 +54,122 @@ export async function getAgendaForDate(date: string): Promise<ActionResult<Agend
   }
 
   try {
-    const [appointments, blocks] = await Promise.all([
+    const supabase = await createClient();
+    const [{ from, to }, appointments, blocks] = await Promise.all([
+      Promise.resolve(getLocalDayWindow(date)),
       appointmentRepo.getForAgenda(barber.id, date),
       barberScheduleRepo.getBlocksForDate(barber.id, date),
     ]);
+
+    // What the barber already collected today (RLS only exposes their own rows).
+    const { data: payments } = await supabase
+      .from("payments")
+      .select("amount, commission_amount")
+      .eq("barber_id", barber.id)
+      .gte("created_at", from)
+      .lt("created_at", to);
+
+    const totals = (payments ?? []).reduce(
+      (acc, p) => ({
+        turnos: acc.turnos + 1,
+        cobrado: acc.cobrado + (Number(p.amount) || 0),
+        comision: acc.comision + (Number(p.commission_amount) || 0),
+      }),
+      { turnos: 0, cobrado: 0, comision: 0 }
+    );
+
+    const cobrado = Math.round(totals.cobrado * 100) / 100;
+    const comision = Math.round(totals.comision * 100) / 100;
 
     return {
       success: true,
       data: {
         appointments: appointments as unknown as AgendaAppointment[],
         blocks: blocks as AgendaBlock[],
+        summary: {
+          turnos: totals.turnos,
+          cobrado,
+          comision,
+          teQueda: Math.round((cobrado - comision) * 100) / 100,
+        },
       },
     };
+  } catch {
+    return { success: false, error: "No se pudo cargar la agenda" };
+  }
+}
+
+export type AgendaRangeDay = {
+  date: string;
+  appointments: AgendaAppointment[];
+  blocks: AgendaBlock[];
+};
+
+const SHOP_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A month grid is 42 days and the guard rejects anything past two months. */
+const MAX_RANGE_DAYS = 62;
+
+function eachDate(from: string, to: string): string[] {
+  const dates: string[] = [];
+  let cursor = from;
+  while (cursor <= to && dates.length <= MAX_RANGE_DAYS) {
+    dates.push(cursor);
+    cursor = addDays(cursor, 1);
+  }
+  return dates;
+}
+
+/**
+ * Calendar data for the week/month views: every day in the range comes back, empty
+ * days included, so the client can render a stable grid without filling gaps.
+ */
+export async function getAgendaRange(input: {
+  from: string;
+  to: string;
+}): Promise<ActionResult<{ days: AgendaRangeDay[] }>> {
+  const barber = await getCurrentBarber();
+  if (!barber) {
+    return {
+      success: false,
+      error: "No se encontró un barbero asociado a tu cuenta. Contacta al administrador.",
+    };
+  }
+
+  const from = input?.from;
+  const to = input?.to;
+  if (
+    typeof from !== "string" ||
+    typeof to !== "string" ||
+    !SHOP_DATE_PATTERN.test(from) ||
+    !SHOP_DATE_PATTERN.test(to) ||
+    to < from ||
+    eachDate(from, to).length > MAX_RANGE_DAYS
+  ) {
+    return { success: false, error: "Datos inválidos" };
+  }
+
+  try {
+    const [appointments, blocks] = await Promise.all([
+      appointmentRepo.getForRange(barber.id, from, to),
+      barberScheduleRepo.getBlocksForRange(barber.id, from, to),
+    ]);
+
+    const days: AgendaRangeDay[] = eachDate(from, to).map((date) => ({
+      date,
+      appointments: [],
+      blocks: [],
+    }));
+    const byDate = new Map(days.map((day) => [day.date, day]));
+
+    for (const appointment of appointments ?? []) {
+      byDate.get(appointment.date)?.appointments.push(appointment as unknown as AgendaAppointment);
+    }
+    for (const block of blocks ?? []) {
+      byDate.get(block.date)?.blocks.push(block as AgendaBlock);
+    }
+
+    return { success: true, data: { days } };
   } catch {
     return { success: false, error: "No se pudo cargar la agenda" };
   }

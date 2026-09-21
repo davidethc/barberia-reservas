@@ -1,13 +1,42 @@
-import { getAgendaForDate } from "@/app/actions/agenda";
+import { getAgendaForDate, getAgendaRange, type AgendaRangeDay } from "@/app/actions/agenda";
 import { AgendaView } from "@/components/agenda/agenda-view";
 import { StaffHeader } from "@/components/staff/staff-header";
 import { getCurrentBarber, isCurrentUserAdmin } from "@/lib/staff";
-import { shopToday } from "@/lib/shop-date";
+import { addDays, getDayOfWeek, shopToday } from "@/lib/shop-date";
 import { Card, CardContent } from "@/components/ui/card";
 import { TriangleAlert } from "lucide-react";
 
-export default async function AgendaPage() {
-  const date = shopToday();
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+type ViewMode = "dia" | "semana" | "mes";
+
+function monthStartOf(dateStr: string): string {
+  return `${dateStr.slice(0, 7)}-01`;
+}
+
+/** The first Sunday on or before the month, plus the 42 cells a grid can show. */
+function monthGridRange(anchor: string): { from: string; to: string } {
+  const from = addDays(anchor, -getDayOfWeek(anchor));
+  return { from, to: addDays(from, 41) };
+}
+
+async function loadRange(from: string, to: string): Promise<Record<string, AgendaRangeDay>> {
+  const result = await getAgendaRange({ from, to });
+  if (!result.success) return {};
+  return Object.fromEntries(result.data.days.map((day) => [day.date, day]));
+}
+
+export default async function AgendaPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ v?: string; d?: string }>;
+}) {
+  const query = await searchParams;
+  const initialView: ViewMode =
+    query.v === "semana" ? "semana" : query.v === "mes" ? "mes" : "dia";
+  const requestedDate = query.d && DATE_KEY_PATTERN.test(query.d) ? query.d : null;
+  const date = requestedDate ?? shopToday();
+
   const [barber, isAdmin] = await Promise.all([getCurrentBarber(), isCurrentUserAdmin()]);
 
   // A session with no barber row cannot have an agenda at all: say so instead of failing
@@ -24,13 +53,25 @@ export default async function AgendaPage() {
     );
   }
 
-  const result = await getAgendaForDate(date);
+  const [result, initialWeekDays, initialMonthDays] = await Promise.all([
+    getAgendaForDate(date),
+    initialView === "semana" ? loadRange(date, addDays(date, 6)) : null,
+    initialView === "mes" ? loadRangeRelativeToMonth(date) : null,
+  ]);
 
   return (
     <div className="min-h-screen bg-background">
       <StaffHeader isAdmin={isAdmin} />
       {result.success ? (
-        <AgendaView initialDate={date} initialDay={result.data} barberId={barber.id} />
+        <AgendaView
+          initialDate={date}
+          initialDay={result.data}
+          initialView={initialView}
+          initialWeekDays={initialWeekDays}
+          initialMonthDays={initialMonthDays}
+          barberId={barber.id}
+          commissionPct={barber.commission_pct ?? 40}
+        />
       ) : (
         <AgendaMessage
           title={result.error}
@@ -39,6 +80,11 @@ export default async function AgendaPage() {
       )}
     </div>
   );
+}
+
+async function loadRangeRelativeToMonth(date: string): Promise<Record<string, AgendaRangeDay>> {
+  const { from, to } = monthGridRange(monthStartOf(date));
+  return loadRange(from, to);
 }
 
 function AgendaMessage({ title, body }: { title: string; body: string }) {

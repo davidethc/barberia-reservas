@@ -18,6 +18,23 @@ export const barberScheduleRepo = {
     return data;
   },
 
+  /** Blocks in a closed date range, for the week/month calendar views. */
+  async getBlocksForRange(barberId: string, from: string, to: string) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("barber_schedules")
+      .select("id, date, start_time, end_time")
+      .eq("barber_id", barberId)
+      .eq("type", BLOCK_TYPE)
+      .gte("date", from)
+      .lte("date", to)
+      .order("date")
+      .order("start_time");
+
+    if (error) throw error;
+    return data;
+  },
+
   /** Half-open comparison: a block ending at 13:00 does not collide with one starting there. */
   async getOverlappingBlocks(
     barberId: string,

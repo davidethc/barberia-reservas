@@ -27,11 +27,24 @@ export const serviceRepo = {
     return data;
   },
 
+  async getById(id: string) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("services")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
   async create(data: {
     name: string;
     description?: string | null;
     durationMinutes: number;
     price: number;
+    icon?: string | null;
     sortOrder?: number;
   }) {
     const supabase = await createClient();
@@ -43,6 +56,7 @@ export const serviceRepo = {
         description: data.description ?? null,
         duration_minutes: data.durationMinutes,
         price: data.price,
+        icon: data.icon ?? null,
         sort_order: data.sortOrder ?? 0,
       })
       .select()
@@ -59,6 +73,7 @@ export const serviceRepo = {
       description?: string | null;
       durationMinutes: number;
       price: number;
+      icon?: string | null;
     }
   ) {
     const supabase = await createClient();
@@ -69,6 +84,7 @@ export const serviceRepo = {
         description: data.description ?? null,
         duration_minutes: data.durationMinutes,
         price: data.price,
+        icon: data.icon ?? null,
       })
       .eq("id", id)
       .select()
@@ -76,6 +92,32 @@ export const serviceRepo = {
 
     if (error) throw error;
     return service;
+  },
+
+  async uploadImage(id: string, imageUrl: string) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("services")
+      .update({ image_url: imageUrl })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async removeImage(id: string) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("services")
+      .update({ image_url: null })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
   },
 
   async setActive(id: string, isActive: boolean) {

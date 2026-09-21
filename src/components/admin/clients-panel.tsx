@@ -152,7 +152,7 @@ export function ClientsPanel({ initial }: { initial: ClientsSnapshot | null }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold">Clientes</h2>
+        <h2 className="font-heading text-lg font-semibold">Clientes</h2>
         {stats && stats.total > 0 && (
           <p className="text-sm text-muted-foreground">
             {stats.total === 1 ? "1 cliente" : `${stats.total} clientes`} en la base
@@ -305,7 +305,7 @@ function ClientRow({ client, onOpen }: { client: ClientListItem; onOpen: () => v
       <a
         href={`tel:${client.phone}`}
         aria-label={`Llamar a ${client.name}`}
-        className="flex w-14 shrink-0 items-center justify-center rounded-r-xl border-l border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="flex w-14 shrink-0 items-center justify-center rounded-r-xl border-l border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:z-10 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <Phone className="size-4" />
       </a>
@@ -384,7 +384,7 @@ function ClientDetailDialog({
           {client?.phone && (
             <a
               href={`tel:${client.phone}`}
-              className="flex h-12 items-center gap-2 rounded-lg bg-muted px-3 text-sm font-medium transition-colors hover:bg-muted/70"
+              className="flex h-12 items-center gap-2 rounded-lg bg-muted px-3 text-sm font-medium transition-colors hover:bg-muted/70 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
               <Phone className="size-4 text-muted-foreground" />
               <span className="tabular-nums">{client.phone}</span>

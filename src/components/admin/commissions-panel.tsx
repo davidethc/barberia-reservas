@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { formatPrice, formatDate } from "@/lib/utils";
+import { formatMoney, formatDate } from "@/lib/utils";
 
 /**
  * The picker hands back local midnight; `toISOString()` would shift that to the previous
@@ -65,7 +65,7 @@ export function CommissionsPanel() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Reporte de comisiones</h2>
+      <h2 className="font-heading text-lg font-semibold">Reporte de comisiones</h2>
 
       <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
         <Button
@@ -115,8 +115,8 @@ export function CommissionsPanel() {
       {rows.length > 0 && (
         <div className="grid grid-cols-3 gap-2 sm:gap-3">
           <SummaryCard label="Servicios" value={String(totals.servicios)} />
-          <SummaryCard label="Ingresos" value={formatPrice(totals.ingreso)} />
-          <SummaryCard label="Comisiones" value={formatPrice(totals.comision)} />
+          <SummaryCard label="Ingresos" value={formatMoney(totals.ingreso)} />
+          <SummaryCard label="Comisiones" value={formatMoney(totals.comision)} />
         </div>
       )}
 
@@ -178,10 +178,10 @@ export function CommissionsPanel() {
                     {row.total_servicios ?? 0}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {formatPrice(Number(row.ingreso_total ?? 0))}
+                    {formatMoney(Number(row.ingreso_total ?? 0))}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {formatPrice(Number(row.comision_total ?? 0))}
+                    {formatMoney(Number(row.comision_total ?? 0))}
                   </TableCell>
                 </TableRow>
               ))}
