@@ -8,6 +8,7 @@ import { ClientsPanel } from "@/components/admin/clients-panel";
 import { HoursPanel } from "@/components/admin/hours-panel";
 import { CommissionsPanel } from "@/components/admin/commissions-panel";
 import { LoyaltyPanel } from "@/components/admin/loyalty-panel";
+import { QrPanel } from "@/components/admin/qr-panel";
 import type { LoyaltySettings } from "@/lib/loyalty";
 import type { ClientsSnapshot } from "@/app/actions/admin";
 import type { Database } from "@/types/database";
@@ -63,6 +64,9 @@ export function AdminTabs({
           <TabsTrigger value="loyalty" className="px-3">
             Fidelidad
           </TabsTrigger>
+          <TabsTrigger value="qr" className="px-3">
+            QR
+          </TabsTrigger>
         </TabsList>
       </div>
 
@@ -83,6 +87,9 @@ export function AdminTabs({
       </TabsContent>
       <TabsContent value="loyalty">
         <LoyaltyPanel initial={loyalty} />
+      </TabsContent>
+      <TabsContent value="qr">
+        <QrPanel />
       </TabsContent>
     </Tabs>
   );
