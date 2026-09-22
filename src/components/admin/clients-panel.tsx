@@ -33,7 +33,10 @@ const SORTS: { value: ClientSort; label: string }[] = [
   { value: "name", label: "Nombre" },
 ];
 
-/** From this many visits a client is a regular worth recognizing by name. */
+/**
+ * With the stamp card off, a regular is still worth recognizing by name from this many
+ * visits. With it on, the badge shows the real card instead.
+ */
 const LOYAL_MIN_VISITS = 5;
 
 const MONTHS = [
@@ -70,7 +73,13 @@ function visitsLabel(count: number | null): string {
   return visits === 1 ? "1 visita" : `${visits} visitas`;
 }
 
-export function ClientsPanel({ initial }: { initial: ClientsSnapshot | null }) {
+export function ClientsPanel({
+  initial,
+  loyaltyEnabled,
+}: {
+  initial: ClientsSnapshot | null;
+  loyaltyEnabled: boolean;
+}) {
   const [term, setTerm] = useState("");
   const [sort, setSort] = useState<ClientSort>("visits");
   const [clients, setClients] = useState<ClientListItem[]>(initial?.items ?? []);
@@ -143,7 +152,10 @@ export function ClientsPanel({ initial }: { initial: ClientsSnapshot | null }) {
   }
 
   function handleNotesSaved(updated: ClientListItem) {
-    setClients((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    // The notes update does not recompute the stamp card, so keep the one already on screen.
+    setClients((prev) =>
+      prev.map((c) => (c.id === updated.id ? { ...updated, loyalty: c.loyalty } : c))
+    );
     setSelected(null);
   }
 
@@ -228,7 +240,12 @@ export function ClientsPanel({ initial }: { initial: ClientsSnapshot | null }) {
         <>
           <div className="space-y-2">
             {clients.map((client) => (
-              <ClientRow key={client.id} client={client} onOpen={() => setSelected(client)} />
+              <ClientRow
+                key={client.id}
+                client={client}
+                loyaltyEnabled={loyaltyEnabled}
+                onOpen={() => setSelected(client)}
+              />
             ))}
           </div>
 
@@ -268,9 +285,18 @@ function StatCard({ label, value }: { label: string; value: number }) {
   );
 }
 
-function ClientRow({ client, onOpen }: { client: ClientListItem; onOpen: () => void }) {
+function ClientRow({
+  client,
+  loyaltyEnabled,
+  onOpen,
+}: {
+  client: ClientListItem;
+  loyaltyEnabled: boolean;
+  onOpen: () => void;
+}) {
   const visits = client.visit_count ?? 0;
-  const isLoyal = visits >= LOYAL_MIN_VISITS;
+  const card = loyaltyEnabled ? client.loyalty : null;
+  const isLoyal = !loyaltyEnabled && visits >= LOYAL_MIN_VISITS;
 
   return (
     <div className="flex items-stretch gap-2 rounded-xl border border-border bg-card">
@@ -285,6 +311,21 @@ function ClientRow({ client, onOpen }: { client: ClientListItem; onOpen: () => v
             <Badge variant="outline" className="shrink-0 gap-1 border-accent text-accent">
               <Star className="size-3" />
               Fiel
+            </Badge>
+          )}
+          {card?.eligible && (
+            <Badge variant="outline" className="shrink-0 gap-1 border-accent text-accent">
+              <Star className="size-3" />
+              Corte gratis
+            </Badge>
+          )}
+          {card && !card.eligible && card.progress > 0 && (
+            <Badge
+              variant="outline"
+              className="shrink-0 tabular-nums"
+              aria-label={`${card.progress} de ${card.cycle - 1} sellos para el corte gratis`}
+            >
+              {card.progress}/{card.cycle - 1}
             </Badge>
           )}
           {client.notes && (
@@ -335,8 +376,8 @@ function EmptyState({ term, onClear }: { term: string; onClear: () => void }) {
       <Users className="size-6 text-muted-foreground" />
       <p className="mt-3 text-sm font-medium text-foreground">Todavía no hay clientes</p>
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        Cada reserva hecha desde la web crea un cliente con su teléfono y le suma una visita.
-        En cuanto entre el primer turno vas a verlo aquí.
+        Cada reserva hecha desde la web crea un cliente con su teléfono. La visita se le suma
+        cuando el barbero completa el turno.
       </p>
     </div>
   );

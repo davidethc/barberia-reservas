@@ -7,6 +7,8 @@ import { BarbersPanel, isUnlinked } from "@/components/admin/barbers-panel";
 import { ClientsPanel } from "@/components/admin/clients-panel";
 import { HoursPanel } from "@/components/admin/hours-panel";
 import { CommissionsPanel } from "@/components/admin/commissions-panel";
+import { LoyaltyPanel } from "@/components/admin/loyalty-panel";
+import type { LoyaltySettings } from "@/lib/loyalty";
 import type { ClientsSnapshot } from "@/app/actions/admin";
 import type { Database } from "@/types/database";
 
@@ -19,11 +21,13 @@ export function AdminTabs({
   barbers: initialBarbers,
   businessHours,
   clients,
+  loyalty,
 }: {
   services: Service[];
   barbers: Barber[];
   businessHours: BusinessHours[];
   clients: ClientsSnapshot | null;
+  loyalty: LoyaltySettings;
 }) {
   // Barbers live here so the tab badge keeps counting the same list the panel edits.
   const [barbers, setBarbers] = useState(initialBarbers);
@@ -56,6 +60,9 @@ export function AdminTabs({
           <TabsTrigger value="commissions" className="px-3">
             Comisiones
           </TabsTrigger>
+          <TabsTrigger value="loyalty" className="px-3">
+            Fidelidad
+          </TabsTrigger>
         </TabsList>
       </div>
 
@@ -63,7 +70,7 @@ export function AdminTabs({
         <ServicesPanel initialServices={services} />
       </TabsContent>
       <TabsContent value="clients">
-        <ClientsPanel initial={clients} />
+        <ClientsPanel initial={clients} loyaltyEnabled={loyalty.enabled} />
       </TabsContent>
       <TabsContent value="barbers">
         <BarbersPanel barbers={barbers} onBarbersChange={setBarbers} />
@@ -73,6 +80,9 @@ export function AdminTabs({
       </TabsContent>
       <TabsContent value="commissions">
         <CommissionsPanel />
+      </TabsContent>
+      <TabsContent value="loyalty">
+        <LoyaltyPanel initial={loyalty} />
       </TabsContent>
     </Tabs>
   );
