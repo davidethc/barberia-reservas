@@ -9,9 +9,12 @@ import { ordinalTurn, paidTurnsPerReward, type LoyaltyProgress } from "@/lib/loy
 /**
  * The stamp card as a strip: one dot per paid turn and a gift for the free one. Same
  * mechanics as StepProgress (progressbar semantics, SPRING_SNAPPY) so the wizard keeps a
- * single visual language. `moment` changes only the copy: while typing the phone the
- * booking does not exist yet; on the confirmation it exists but is still pending, so it
- * has not added a stamp — the copy says what *this* cut will do.
+ * single visual language. Announcing it is the caller's job: a live region only speaks
+ * about changes, so it has to be mounted before the card arrives.
+ *
+ * `moment` changes only the copy: while typing the phone the booking does not exist yet;
+ * on the confirmation it exists but is still pending, so it has not added a stamp — the
+ * copy says what *this* cut will do.
  */
 export function LoyaltyStamps({
   card,
@@ -48,7 +51,8 @@ export function LoyaltyStamps({
             aria-hidden
             className={cn(
               "size-3 rounded-full border",
-              i < filled ? "border-primary bg-primary" : "border-border bg-transparent"
+              // Empty dots at 3:1 against ink; the sentence below carries the count anyway.
+              i < filled ? "border-primary bg-primary" : "border-muted-foreground/70 bg-transparent"
             )}
             initial={false}
             animate={{ scale: i < filled ? 1 : 0.85 }}
@@ -71,7 +75,7 @@ export function LoyaltyStamps({
         </motion.span>
       </div>
 
-      <p aria-live="polite" className="mt-3 text-sm leading-snug">
+      <p className="mt-3 text-sm leading-snug">
         {copyFor(card, needed, freeTurn, moment)}
       </p>
     </div>

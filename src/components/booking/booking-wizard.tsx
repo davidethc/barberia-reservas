@@ -855,21 +855,28 @@ function DetailsStep({
             className={cn(inputClasses, "tabular-nums")}
           />
         </Field>
-        {/* Grows in only after the phone was typed (a response to input, not a layout jump). */}
-        <AnimatePresence initial={false}>
-          {loyaltyCard && phoneIsValid && (
-            <motion.div
-              key="stamps"
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={SPRING_SNAPPY}
-              className="overflow-hidden"
-            >
-              <LoyaltyStamps card={loyaltyCard} moment="details" />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* Grows in only after the phone was typed (a response to input, not a layout jump).
+            The live region is always mounted so a screen reader hears the card arrive; it
+            takes no space of its own (mt-0!), the gap lives inside the animated part, so with
+            no card the form is laid out exactly as before. */}
+        <div role="status" aria-live="polite" aria-atomic="true" className="mt-0!">
+          <AnimatePresence initial={false}>
+            {loyaltyCard && phoneIsValid && (
+              <motion.div
+                key="stamps"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={SPRING_SNAPPY}
+                className="overflow-hidden"
+              >
+                <div className="pt-5">
+                  <LoyaltyStamps card={loyaltyCard} moment="details" />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
         <Field
           id={`${uid}-notes`}
           label="Notas (opcional)"

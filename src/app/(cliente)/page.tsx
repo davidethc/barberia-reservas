@@ -82,7 +82,7 @@ export default async function HomePage() {
                   El {ordinalTurn(loyaltyCycle)} corte va por la casa
                 </strong>
                 <span aria-hidden> · </span>
-                sin registrarte, con tu celular
+                sin registro
               </span>
             </p>
           ) : (
