@@ -9,42 +9,152 @@
 --   canjeadas R = citas completed con is_reward = true
 --   progreso    = max(P - R * (ciclo - 1), 0)
 --   elegible    = progreso >= ciclo - 1
+--
+-- TRES REGLAS QUE ESTA MIGRACIÓN SE IMPONE
+--
+--   1. `complete_appointment` NO SE TOCA. Es por donde entra todo el dinero del negocio
+--      y hoy funciona. El canje vive en una función hermana,
+--      `complete_appointment_reward`, así que el camino de cobro que ya existe no se
+--      borra, no se reemplaza y no cambia de firma: si lo nuevo falla, se sigue
+--      cobrando igual que ayer.
+--   2. Ningún nombre de constraint se da por supuesto. Se descubren desde
+--      `pg_constraint` y, si no aparecen, la migración ABORTA en vez de seguir de largo.
+--   3. El check de `amount` no se relaja: se vuelve MÁS estricto. Hoy dice
+--      `amount > 0`; pasa a exigir que un pago 'reward' valga exactamente 0 y que
+--      cualquier otro siga siendo > 0. Un cobro normal en $0 era imposible antes y
+--      sigue siéndolo.
+--
+-- Todo el archivo es idempotente: volver a aplicarlo no rompe nada.
 
--- 1. Configuración por negocio. Nace apagado: hasta que el dueño lo encienda, nada cambia.
+-- ---------------------------------------------------------------------------
+-- 1. Configuración por negocio. Nace apagada: hasta que el dueño la encienda, nada
+--    cambia en ninguna pantalla.
+-- ---------------------------------------------------------------------------
+
 alter table public.businesses
-  add column if not exists loyalty_enabled boolean not null default false,
-  add column if not exists loyalty_cycle   integer not null default 6
-    check (loyalty_cycle between 2 and 20);
+  add column if not exists loyalty_enabled boolean not null default false;
+
+alter table public.businesses
+  add column if not exists loyalty_cycle integer not null default 6;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.businesses'::regclass
+      and conname = 'businesses_loyalty_cycle_check'
+  ) then
+    alter table public.businesses
+      add constraint businesses_loyalty_cycle_check
+      check (loyalty_cycle between 2 and 20);
+  end if;
+end $$;
 
 -- `anon` tiene SELECT sobre businesses columna por columna (ver la migración
 -- restrict_column_and_table_privileges_for_anon), así que las nuevas no se leen sin esto.
 grant select (loyalty_enabled, loyalty_cycle) on public.businesses to anon;
 
--- 2. La marca del turno canjeado, única fuente de verdad del canje.
+-- ---------------------------------------------------------------------------
+-- 2. La marca del turno canjeado: única fuente de verdad del canje.
+-- ---------------------------------------------------------------------------
+
 alter table public.appointments
   add column if not exists is_reward boolean not null default false;
 
 create index if not exists appointments_client_completed_idx
   on public.appointments (client_id) where status = 'completed';
 
--- 3. Dejar entrar el $0. Hoy hay dos topes que lo impiden.
--- OJO: los dos nombres de constraint de abajo son los que Postgres genera por defecto, pero
--- no se pudieron verificar contra la base al escribir esto. Con `drop ... if exists`, un
--- nombre equivocado no falla: deja el check viejo en pie y el canje revienta al insertar el
--- pago de $0. Antes de aplicar, comprobar con:
---   select conname, pg_get_constraintdef(oid) from pg_constraint
---    where conrelid = 'public.payments'::regclass and contype = 'c';
-alter table public.payments drop constraint if exists payments_amount_check;
-alter table public.payments add  constraint payments_amount_check check (amount >= 0);
+-- ---------------------------------------------------------------------------
+-- 3. Los checks de `payments`, descubiertos y no adivinados.
+--
+--    El orden importa: primero se permite el método 'reward', y solo después se exige
+--    que un pago 'reward' valga 0. Al revés, la segunda constraint sería imposible de
+--    satisfacer mientras la primera siga prohibiendo el método.
+--
+--    `\y` es un borde de palabra: hace que el patrón case con `amount` pero NO con
+--    `commission_amount`, que también tiene su propio check en esta tabla.
+-- ---------------------------------------------------------------------------
 
--- El método 'reward' lo pone el servidor, nunca el barbero: así `payments` sigue siendo la
--- tabla del dinero y la vista barber_commissions cuadra sola (ingreso_total no sube,
--- comision_total sí, que es lo que se decidió).
-alter table public.payments drop constraint if exists payments_payment_method_check;
-alter table public.payments add  constraint payments_payment_method_check
+do $$
+declare
+  v_found integer := 0;
+  v_conname text;
+begin
+  for v_conname in
+    select conname from pg_constraint
+    where conrelid = 'public.payments'::regclass
+      and contype = 'c'
+      and pg_get_constraintdef(oid) ~ '\ypayment_method\y'
+  loop
+    execute format('alter table public.payments drop constraint %I', v_conname);
+    v_found := v_found + 1;
+  end loop;
+
+  if v_found = 0 then
+    raise exception
+      'FIDELIDAD: no se encontró ningún CHECK sobre payments.payment_method. '
+      'La tabla no es la que esta migración espera: revisar a mano antes de seguir.';
+  end if;
+end $$;
+
+alter table public.payments
+  add constraint payments_payment_method_check
   check (payment_method in ('cash', 'transfer', 'reward'));
 
--- 4. Helper interno. Sin grants: se llama solo desde las funciones de abajo.
+do $$
+declare
+  v_found integer := 0;
+  v_conname text;
+begin
+  for v_conname in
+    select conname from pg_constraint
+    where conrelid = 'public.payments'::regclass
+      and contype = 'c'
+      and pg_get_constraintdef(oid) ~ '\yamount\y'
+  loop
+    execute format('alter table public.payments drop constraint %I', v_conname);
+    v_found := v_found + 1;
+  end loop;
+
+  if v_found = 0 then
+    raise exception
+      'FIDELIDAD: no se encontró ningún CHECK sobre payments.amount. '
+      'La tabla no es la que esta migración espera: revisar a mano antes de seguir.';
+  end if;
+end $$;
+
+-- Más estricto que el `amount > 0` de antes, no más laxo: el $0 queda reservado al
+-- premio, y un premio no puede colarse con otro importe.
+alter table public.payments
+  add constraint payments_amount_check
+  check (
+    (payment_method = 'reward' and amount = 0)
+    or (payment_method <> 'reward' and amount > 0)
+  );
+
+-- Aserción de cierre: si quedara vivo cualquier otro check que prohíba el 0, el canje
+-- reventaría recién en producción al insertar el pago. Que falle aquí, dentro de la
+-- transacción de la migración, y no allá.
+do $$
+declare
+  v_def text;
+begin
+  for v_def in
+    select pg_get_constraintdef(oid) from pg_constraint
+    where conrelid = 'public.payments'::regclass
+      and contype = 'c'
+      and conname <> 'payments_amount_check'
+      and pg_get_constraintdef(oid) ~ '\yamount\y'
+  loop
+    raise exception
+      'FIDELIDAD: sigue habiendo otro CHECK sobre amount que puede prohibir el 0: %', v_def;
+  end loop;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- 4. Helper interno. Sin grants: solo lo llaman las funciones de abajo.
+-- ---------------------------------------------------------------------------
+
 create or replace function public.loyalty_progress(p_client_id uuid)
 returns table (cycle integer, progress integer, eligible boolean)
 language sql
@@ -70,9 +180,14 @@ $$;
 
 revoke all on function public.loyalty_progress(uuid) from public, anon, authenticated;
 
--- 5. Lectura pública, por teléfono. Devuelve solo números: un teléfono desconocido responde
--- lo mismo que un cliente nuevo, así que no confirma si un número es cliente ni revela
--- nombres, y nunca devuelve el client_id.
+-- ---------------------------------------------------------------------------
+-- 5. Lectura pública, por teléfono.
+--
+--    Devuelve solo números. Un teléfono desconocido responde lo mismo que un cliente
+--    nuevo, así que la función no confirma si un número es cliente ni revela nombres,
+--    y nunca devuelve el client_id.
+-- ---------------------------------------------------------------------------
+
 create or replace function public.public_loyalty_progress(p_business_id uuid, p_phone text)
 returns table (cycle integer, progress integer, eligible boolean)
 language plpgsql
@@ -115,10 +230,17 @@ end;
 $$;
 
 revoke all on function public.public_loyalty_progress(uuid, text) from public;
-grant execute on function public.public_loyalty_progress(uuid, text) to anon, authenticated, service_role;
+grant execute on function public.public_loyalty_progress(uuid, text)
+  to anon, authenticated, service_role;
 
--- 6. Lectura del staff, por lote de clientes. Tiene que ser definer: un barbero solo ve sus
--- propias citas por RLS, y el progreso cuenta las visitas del cliente con todos los barberos.
+-- ---------------------------------------------------------------------------
+-- 6. Lectura del staff, por lote de clientes.
+--
+--    Tiene que ser definer: un barbero solo ve sus propias citas por RLS
+--    (appointments_staff_select) y el progreso debe contar las visitas del cliente con
+--    TODOS los barberos. Una vista con security_invoker daría números mal.
+-- ---------------------------------------------------------------------------
+
 create or replace function public.staff_client_loyalty(p_client_ids uuid[])
 returns table (client_id uuid, cycle integer, progress integer, eligible boolean)
 language sql
@@ -135,37 +257,31 @@ $$;
 revoke all on function public.staff_client_loyalty(uuid[]) from public, anon;
 grant execute on function public.staff_client_loyalty(uuid[]) to authenticated, service_role;
 
--- 7. El canje, dentro de la misma transacción que ya cierra el turno y cobra.
--- La versión de tres argumentos se borra en vez de dejarla como sobrecarga: dos candidatas
--- con los mismos nombres de parámetro dejan a PostgREST sin saber cuál llamar.
-drop function if exists public.complete_appointment(uuid, text, numeric);
+-- ---------------------------------------------------------------------------
+-- 7. El canje, en su propia función.
+--
+--    Hermana de complete_appointment, NO un reemplazo: aquella queda intacta, con su
+--    firma de tres argumentos, y sigue cobrando como hoy. Repite a propósito los mismos
+--    guards, en el mismo orden y con los mismos tokens de error, para que el barbero
+--    reciba el mismo mensaje se canjee o se cobre. Si un día cambian las reglas de
+--    cierre de un turno, hay que tocar las dos (lo cubre una prueba que compara ambas).
+-- ---------------------------------------------------------------------------
 
-create or replace function public.complete_appointment(
-  p_appointment_id uuid,
-  p_payment_method text,
-  p_amount numeric,
-  p_redeem_reward boolean default false
-)
+create or replace function public.complete_appointment_reward(p_appointment_id uuid)
 returns uuid
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
-  -- A turn is charged at the service price give or take a tip or a discount; anything past
-  -- this is a typo or a forged amount, and it would inflate the barber's own commission.
-  v_max_amount_factor constant numeric := 10;
-  v_redeem boolean := coalesce(p_redeem_reward, false);
   v_barber_id uuid;
   v_commission_pct numeric;
   v_status text;
   v_service_price numeric;
   v_client_id uuid;
   v_eligible boolean;
-  v_amount numeric;
-  v_method text;
-  v_commission numeric;
   v_payment_id uuid;
+  v_payment_method text;
 begin
   select b.id, b.commission_pct
     into v_barber_id, v_commission_pct
@@ -175,11 +291,6 @@ begin
 
   if v_barber_id is null then
     raise exception 'COMPLETE_NOT_STAFF' using errcode = '42501';
-  end if;
-
-  -- En un canje el método lo pone el servidor, así que no se exige al llamante.
-  if not v_redeem and (p_payment_method is null or p_payment_method not in ('cash', 'transfer')) then
-    raise exception 'COMPLETE_INVALID_INPUT' using errcode = '22023';
   end if;
 
   -- Scoped to the caller's own barber row: another barber's turn reads as not found.
@@ -195,71 +306,81 @@ begin
     raise exception 'COMPLETE_NOT_FOUND' using errcode = 'P0002';
   end if;
 
-  -- A payment already on record means the money was taken. Finish the turn around it
-  -- instead of inserting a second one and tripping the unique constraint.
-  select p.id into v_payment_id
+  select p.id, p.payment_method
+    into v_payment_id, v_payment_method
   from public.payments p
   where p.appointment_id = p_appointment_id;
 
   if v_payment_id is not null then
-    if v_status not in ('pending', 'completed') then
-      raise exception 'COMPLETE_NOT_PENDING' using errcode = '22023';
+    -- Doble clic sobre el mismo canje: se devuelve el pago que ya existe en vez de
+    -- intentar un segundo, igual que hace complete_appointment.
+    if v_payment_method = 'reward' then
+      if v_status <> 'completed' then
+        update public.appointments
+           set status = 'completed', is_reward = true
+         where id = p_appointment_id;
+      end if;
+      return v_payment_id;
     end if;
 
-    if v_status <> 'completed' then
-      update public.appointments
-         set status = 'completed'
-       where id = p_appointment_id;
-    end if;
-
-    return v_payment_id;
+    -- Ya se cobró dinero por este turno: no se regala encima de un cobro.
+    raise exception 'COMPLETE_NOT_PENDING' using errcode = '22023';
   end if;
 
   if v_status <> 'pending' then
     raise exception 'COMPLETE_NOT_PENDING' using errcode = '22023';
   end if;
 
-  if v_redeem then
-    select lp.eligible into v_eligible
-    from public.loyalty_progress(v_client_id) lp;
+  select lp.eligible into v_eligible
+  from public.loyalty_progress(v_client_id) lp;
 
-    if not coalesce(v_eligible, false) then
-      raise exception 'COMPLETE_REWARD_NOT_ELIGIBLE' using errcode = '22023';
-    end if;
-
-    v_amount := 0;
-    v_method := 'reward';
-    -- El local absorbe el premio: la comisión se calcula sobre el precio del servicio,
-    -- no sobre lo cobrado, para que el barbero no pague parte del regalo.
-    v_commission := round(v_service_price * v_commission_pct / 100, 2);
-
-    update public.appointments
-       set status = 'completed',
-           is_reward = true
-     where id = p_appointment_id;
-  else
-    v_amount := round(coalesce(p_amount, 0), 2);
-    if v_amount <= 0 or v_amount > v_service_price * v_max_amount_factor then
-      raise exception 'COMPLETE_INVALID_INPUT' using errcode = '22023';
-    end if;
-
-    v_method := p_payment_method;
-    v_commission := round(v_amount * v_commission_pct / 100, 2);
-
-    update public.appointments
-       set status = 'completed'
-     where id = p_appointment_id;
+  if not coalesce(v_eligible, false) then
+    raise exception 'COMPLETE_REWARD_NOT_ELIGIBLE' using errcode = '22023';
   end if;
 
+  update public.appointments
+     set status = 'completed', is_reward = true
+   where id = p_appointment_id;
+
+  -- El local absorbe el premio: la comisión se calcula sobre el precio del servicio, no
+  -- sobre lo cobrado, para que el barbero no pague parte del regalo.
   insert into public.payments (
     appointment_id, barber_id, amount, payment_method, commission_amount
   )
-  values (p_appointment_id, v_barber_id, v_amount, v_method, v_commission)
+  values (
+    p_appointment_id, v_barber_id, 0, 'reward',
+    round(v_service_price * v_commission_pct / 100, 2)
+  )
   returning id into v_payment_id;
 
   return v_payment_id;
 end;
 $$;
 
-revoke all on function public.complete_appointment(uuid, text, numeric, boolean) from public, anon;
-grant execute on function public.complete_appointment(uuid, text, numeric, boolean) to authenticated, service_role;
+revoke all on function public.complete_appointment_reward(uuid) from public, anon;
+grant execute on function public.complete_appointment_reward(uuid) to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- 8. Aserción final: complete_appointment tiene que haber quedado exactamente como
+--    estaba, con su firma de tres argumentos y su grant. Si algo la tocó, abortar.
+-- ---------------------------------------------------------------------------
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'complete_appointment'
+      and pg_get_function_identity_arguments(p.oid)
+          = 'p_appointment_id uuid, p_payment_method text, p_amount numeric'
+  ) then
+    raise exception
+      'FIDELIDAD: complete_appointment ya no tiene su firma de tres argumentos. '
+      'El camino de cobro que existe no debe cambiar en esta migración.';
+  end if;
+
+  if not has_function_privilege('authenticated', 'public.complete_appointment(uuid, text, numeric)', 'EXECUTE') then
+    raise exception 'FIDELIDAD: authenticated perdió el EXECUTE sobre complete_appointment.';
+  end if;
+end $$;

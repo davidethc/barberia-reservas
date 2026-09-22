@@ -9,29 +9,53 @@
 
 ### ¿Es seguro? ¿Rompe algo?
 
-Casi todo sí es seguro, y hay **tres cosas que no puedo llamar "sin riesgo"**. Prefiero
-ponerlas arriba en vez de esconderlas en un apartado de riesgos:
+Los tres riesgos que te señalé en la versión anterior **ya no existen**: no se mitigan
+con cuidado al aplicar, se eliminaron cambiando el diseño. Uno por uno:
 
-1. **La migración toca `complete_appointment`, que es por donde entra todo el dinero.**
-   Hay que borrar la versión de tres argumentos y crear la de cuatro (dos funciones con
-   los mismos nombres de parámetro dejan a PostgREST sin saber cuál llamar). Se hace en
-   una sola transacción y la app desplegada sigue funcionando sin redeploy, porque el
-   cuarto parámetro tiene `default false` y PostgREST resuelve por nombre. Pero si esa
-   función queda mal, **no se puede cobrar ningún turno**. Por eso el paso 1 se verifica
-   en SQL antes de escribir una línea de React.
+1. **~~Tocar `complete_appointment`~~ → no se toca.**
+   La versión anterior borraba la función de tres argumentos y creaba una de cuatro. Eso
+   ponía el camino del dinero en juego para conseguir una rama nueva. Ahora el canje vive
+   en una **función hermana**, `complete_appointment_reward(p_appointment_id)`, y
+   `complete_appointment` queda byte a byte como está: misma firma, mismo grant, mismo
+   código. Si lo nuevo falla, **se sigue cobrando exactamente igual que ayer**. Como
+   nunca se borra nada, tampoco hay ambigüedad de PostgREST ni ventana de despliegue.
+   La migración termina con una aserción que aborta si alguien cambió esa firma.
+   El precio: los guards de cierre de turno quedan repetidos en dos funciones. Es a
+   propósito y está comentado en ambas; una prueba del paso 8 compara que las dos cierren
+   un turno igual, para que no se separen con el tiempo.
 
-2. **Los nombres de las dos constraints de `payments` están sin verificar.** Son los que
-   Postgres genera por defecto, pero la consulta que lo confirmaba fue denegada por el
-   prompt de permisos. Con `drop ... if exists`, un nombre distinto **no falla en voz
-   alta**: deja el check viejo en pie y el canje revienta recién al insertar el pago de
-   $0. Está avisado dentro del propio `.sql`. Se comprueba en 5 segundos con la consulta
-   que ahí se indica.
+2. **~~Nombres de constraint adivinados~~ → se descubren, y si no aparecen aborta.**
+   Ya no hay ningún `drop constraint payments_amount_check` escrito a mano. La migración
+   busca los checks en `pg_constraint` por su definición (con `\yamount\y`, un borde de
+   palabra, para no confundirse con `commission_amount`), los borra por su nombre real y
+   **levanta excepción si no encuentra ninguno**. Al final vuelve a mirar: si quedara
+   vivo cualquier otro check capaz de prohibir el 0, falla ahí mismo, dentro de la
+   transacción. El modo de fallo silencioso desapareció.
 
-3. **Relajar `amount > 0` a `amount >= 0` afecta a todos los pagos, no solo a los
-   premios.** El riesgo real es bajo porque el rol `authenticated` **no tiene INSERT
-   sobre `payments`** (solo la función lo hace) y la rama normal de
-   `complete_appointment` sigue rechazando importes `<= 0`. Pero es una barrera que se
-   baja a nivel de tabla y conviene saberlo.
+3. **~~Relajar `amount > 0`~~ → el check queda más estricto, no más laxo.**
+   En vez de bajarlo a `amount >= 0` para todos, ahora es condicional:
+   ```sql
+   check ( (payment_method =  'reward' and amount =  0)
+        or (payment_method <> 'reward' and amount >  0) )
+   ```
+   Un cobro normal en $0 era imposible antes y **sigue siéndolo**. Y encima se gana una
+   garantía que antes no había: un pago marcado como premio no puede colarse con otro
+   importe. La barrera no se baja; se sube.
+
+Y para que no dependa de que yo tenga razón, el paso 1 se aplica con red:
+
+- **`supabase/checks/preflight_loyalty.sql`** — solo lectura. Contesta antes de tocar
+  nada si los nombres, las firmas y los helpers son los que la migración espera. Cada
+  fila sale con "OK" o "REVISAR".
+- **Rama de Supabase primero.** La migración se aplica en una rama descartable
+  (`mcp__Supabase__create_branch`), se ensaya ahí y recién después va a producción.
+- **`supabase/checks/smoke_loyalty.sql`** — 8 comprobaciones de punta a punta
+  (progreso, privacidad del teléfono, canje, doble clic, reinicio de la tarjeta, rechazo
+  sin sellos, **que el cobro normal siga cobrando**, y que el $0 siga prohibido fuera del
+  premio). Termina en `rollback`: no deja ni un turno, ni un cliente, ni un pago.
+- **`...add_loyalty_program.down.sql`** — la vuelta atrás, escrita antes de necesitarla.
+  Si hay premios ya canjeados, se niega a correr y dice cuántos: revertir con premios
+  entregados es decidir qué pasa con ese dinero, y eso no lo decide un script.
 
 Fuera de eso, el diseño está hecho para no romper nada:
 
@@ -114,21 +138,29 @@ compensaciones ni jobs. Si el dueño cambia el ciclo, el progreso se recalcula p
 
 ## Paso 1 — Migración SQL
 
-**Estado: escrita y versionada, sin aplicar.**
-`supabase/migrations/20260922000000_add_loyalty_program.sql` (commit `8792297`).
+**Estado: escrita, versionada y con red. Sin aplicar.**
 
-Contenido:
+| Archivo | Qué es |
+| --- | --- |
+| `supabase/migrations/20260922000000_add_loyalty_program.sql` | La migración |
+| `supabase/migrations/20260922000000_add_loyalty_program.down.sql` | La vuelta atrás |
+| `supabase/checks/preflight_loyalty.sql` | Verificación previa, solo lectura |
+| `supabase/checks/smoke_loyalty.sql` | Ensayo de punta a punta, termina en `rollback` |
+
+Contenido de la migración:
 
 1. `businesses` gana `loyalty_enabled boolean not null default false` y
    `loyalty_cycle integer not null default 6 check (between 2 and 20)`.
 2. `appointments` gana `is_reward boolean not null default false` + índice parcial
    `appointments_client_completed_idx on (client_id) where status = 'completed'`.
-3. `payments`: `amount >= 0` y `payment_method in ('cash','transfer','reward')`.
+3. `payments`: los dos checks se **descubren** desde `pg_constraint` y se reemplazan por
+   `payment_method in ('cash','transfer','reward')` y el check condicional de `amount`
+   (premio = exactamente 0, todo lo demás > 0). Si no se encuentran, aborta.
    El método `'reward'` lo pone el servidor, nunca el barbero: así `payments` sigue
    siendo la tabla del dinero y la vista `barber_commissions` cuadra sola
    (`ingreso_total` no sube, `comision_total` sí).
 4. `loyalty_progress(p_client_id)` — helper interno, `security definer`,
-   `search_path = ''`, **sin grants**: solo lo llaman las dos funciones de abajo.
+   `search_path = ''`, **sin grants**: solo lo llaman las funciones de abajo.
 5. `public_loyalty_progress(p_business_id, p_phone)` → `anon`. Sigue el patrón de
    nombre y grants de `public_bookable_barbers`.
    **Privacidad:** devuelve solo números; un teléfono desconocido responde igual que un
@@ -137,15 +169,29 @@ Contenido:
    `current_barber_business_id()`. Tiene que ser `definer`: un barbero solo ve sus
    propias citas por RLS y el progreso debe contar las visitas con **todos** los
    barberos.
-7. `complete_appointment` con cuarto parámetro `p_redeem_reward boolean default false`.
+7. `complete_appointment_reward(p_appointment_id)` → `authenticated`. **Función nueva,
+   no un reemplazo**: `complete_appointment` no se toca (ver respuesta 1 arriba).
 8. `grant select (loyalty_enabled, loyalty_cycle) on businesses to anon` — obligatorio:
    `anon` tiene SELECT **columna por columna** sobre `businesses`.
+9. Aserción final: si `complete_appointment` perdió su firma de tres argumentos o su
+   grant, la migración aborta.
 
-**Aplicar con** `mcp__Supabase__apply_migration`, luego `generate_typescript_types` →
-`src/types/database.ts`, y `get_advisors` (security + performance).
+### Cómo se aplica (en este orden, sin saltarse ninguno)
 
-> ⚠️ Antes de aplicar: verificar los nombres de las constraints de `payments`
-> (ver la advertencia 2 de arriba, la consulta está en el `.sql`).
+```
+1. preflight_loyalty.sql contra producción  → todo "OK", ningún "REVISAR"
+2. create_branch  → rama descartable de Supabase
+3. apply_migration en la rama
+4. smoke_loyalty.sql en la rama             → "TODO OK: 8 de 8"
+5. delete_branch
+6. apply_migration en producción
+7. smoke_loyalty.sql en producción          → 8 de 8, y termina en rollback: no deja nada
+8. get_advisors (security + performance)    → sin avisos nuevos
+9. generate_typescript_types                → sobrescribir src/types/database.ts
+```
+
+Si el plan de Supabase no permite ramas, se salta del 1 al 6 y el seguro pasa a ser el
+`down.sql` más el smoke test, que ya de por sí no deja rastro.
 
 ## Paso 2 — Datos y acciones
 
@@ -156,8 +202,10 @@ Contenido:
 - **`src/lib/repositories/appointments.ts`** — `getForAgenda` (L34-44) y `getForRange`
   (L48-60): `clients(name, phone)` → `clients(id, name, phone)`. Hoy el `client_id` no
   llega a la agenda.
-- **`src/lib/repositories/payments.ts`** — `completeAppointment` acepta y reenvía
-  `redeemReward`.
+- **`src/lib/repositories/payments.ts`** — `completeAppointment` recibe `redeemReward` y
+  **elige la función**: con `true` llama a `complete_appointment_reward(p_appointment_id)`;
+  con `false` llama a `complete_appointment(...)` exactamente como hoy, con los mismos
+  tres argumentos. La rama de cobro que ya existe no cambia ni una letra.
 - **`src/app/actions/booking.ts`**
   - `getCachedBookingData` (L120): el select de `businesses` pasa a
     `"name, phone, address, loyalty_enabled, loyalty_cycle"`. El tag `BOOKING_DATA_TAG`
@@ -172,7 +220,7 @@ Contenido:
 - **`src/app/actions/admin.ts`** — `updateLoyaltySettings` con el gate de siempre
   (`isCurrentUserAdmin()`) y cierre `revalidatePath("/admin")` + `updateTag(BOOKING_DATA_TAG)`,
   como `updateBusinessHours` (L477-489). `getAdminData` suma `businessRepo.get()`.
-- **`src/app/actions/agenda.ts`** — `completeAppointment` reenvía `p_redeem_reward`;
+- **`src/app/actions/agenda.ts`** — `completeAppointment` reenvía `redeemReward` al repo;
   `COMPLETE_ERROR_MESSAGES` suma
   `COMPLETE_REWARD_NOT_ELIGIBLE: "Este cliente ya no tiene un corte gratis disponible."`.
   `getAgendaForDate` pide el progreso de los `client_id` del día en una sola llamada.
@@ -324,6 +372,16 @@ descarta al terminar.
 **No regresión** (`reserva.spec.ts`)
 - El flujo de reserva completo de hoy, extremo a extremo. Es el seguro de que el paso 5
   no rompió nada.
+- **Cobro normal intacto**: completar un turno con `cash` y con `transfer` sigue dejando
+  el pago y la comisión de siempre. Es la prueba que vigila que la función hermana no se
+  haya llevado por delante la original.
+
+**Las dos funciones no se separan** (suite SQL, contra la rama)
+- Cerrar un turno por cobro y cerrarlo por canje dejan el mismo estado salvo el importe
+  y el método: `status = 'completed'`, exactamente un pago, comisión con la misma
+  fórmula. Es lo que impide que `complete_appointment` y `complete_appointment_reward`
+  se vayan separando con el tiempo, que es el único precio que paga el diseño de dos
+  funciones.
 
 **Regresión visual** (`visual/flujo-cliente.spec.ts`)
 - `toHaveScreenshot()` en las 12 pantallas del flujo, con animaciones congeladas
@@ -385,7 +443,7 @@ Un paso no está cerrado hasta que:
 
 ```
 0. fewer-permission-prompts        → dejar de tropezar con los permisos
-1. Migración SQL + tipos           → verificar en SQL antes de tocar UI
+1. Migración SQL + tipos           → preflight, rama, smoke 8/8, recién ahí producción
    └ security-review + code-review (obligatorio: aquí está el dinero)
 2. Datos y acciones
 3. Admin                           → el dueño ya puede encenderlo
