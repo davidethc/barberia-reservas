@@ -1,12 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { agendaCard } from "../fixtures/flows";
 import { seed, signIn, stubState, turnLoyaltyOff } from "../fixtures/stub";
 
 // El canje en la agenda: aquí está el dinero. "Luis Fiel" tiene cinco cortes pagados y un
 // turno pendiente hoy a las 18:00; "Carlos Pérez" es un cliente sin sellos a las 17:00.
-
-function cardOf(page: Page, name: string, other: string) {
-  return page.locator("div").filter({ hasText: name }).filter({ hasNotText: other });
-}
 
 test.beforeEach(async ({ page }) => {
   await seed("loyalty-eligible");
@@ -15,12 +12,12 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("solo el cliente elegible lleva la insignia de corte gratis", async ({ page }) => {
-  await expect(cardOf(page, "Luis Fiel", "Carlos Pérez").getByText("Corte gratis")).toBeVisible();
-  await expect(cardOf(page, "Carlos Pérez", "Luis Fiel").getByText("Corte gratis")).toHaveCount(0);
+  await expect(agendaCard(page, "Luis Fiel", "Carlos Pérez").getByText("Corte gratis")).toBeVisible();
+  await expect(agendaCard(page, "Carlos Pérez", "Luis Fiel").getByText("Corte gratis")).toHaveCount(0);
 });
 
 test("aplicar el corte gratis: $0, sin método de pago y comisión sobre el precio", async ({ page }) => {
-  await cardOf(page, "Luis Fiel", "Carlos Pérez").getByRole("button", { name: "Completar" }).click();
+  await agendaCard(page, "Luis Fiel", "Carlos Pérez").getByRole("button", { name: "Completar" }).click();
   const dialog = page.getByRole("dialog", { name: "Completar turno" });
 
   // Apagado por defecto: el canje siempre es decisión explícita del barbero.
@@ -45,7 +42,7 @@ test("aplicar el corte gratis: $0, sin método de pago y comisión sobre el prec
 });
 
 test("un doble clic no crea dos pagos", async ({ page }) => {
-  await cardOf(page, "Luis Fiel", "Carlos Pérez").getByRole("button", { name: "Completar" }).click();
+  await agendaCard(page, "Luis Fiel", "Carlos Pérez").getByRole("button", { name: "Completar" }).click();
   const dialog = page.getByRole("dialog", { name: "Completar turno" });
   await dialog.getByRole("switch", { name: "Aplicar corte gratis" }).click();
   await dialog.getByRole("button", { name: "Confirmar corte gratis" }).dblclick();
@@ -56,7 +53,7 @@ test("un doble clic no crea dos pagos", async ({ page }) => {
 });
 
 test("si el premio ya no corresponde, el servidor lo rechaza con un mensaje claro", async ({ page }) => {
-  await cardOf(page, "Luis Fiel", "Carlos Pérez").getByRole("button", { name: "Completar" }).click();
+  await agendaCard(page, "Luis Fiel", "Carlos Pérez").getByRole("button", { name: "Completar" }).click();
   const dialog = page.getByRole("dialog", { name: "Completar turno" });
   await dialog.getByRole("switch", { name: "Aplicar corte gratis" }).click();
 
@@ -68,7 +65,7 @@ test("si el premio ya no corresponde, el servidor lo rechaza con un mensaje clar
 });
 
 test("con el interruptor apagado el cobro de un cliente elegible es el normal", async ({ page }) => {
-  await cardOf(page, "Luis Fiel", "Carlos Pérez").getByRole("button", { name: "Completar" }).click();
+  await agendaCard(page, "Luis Fiel", "Carlos Pérez").getByRole("button", { name: "Completar" }).click();
   await page.getByRole("dialog", { name: "Completar turno" }).getByRole("button", { name: "Confirmar" }).click();
 
   await expect(page.getByText("Turno completado")).toBeVisible();

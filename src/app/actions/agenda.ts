@@ -67,13 +67,22 @@ export async function getAgendaForDate(date: string): Promise<ActionResult<Agend
       barberScheduleRepo.getBlocksForDate(barber.id, date),
     ]);
 
-    // What the barber already collected today (RLS only exposes their own rows).
-    const { data: payments } = await supabase
-      .from("payments")
-      .select("amount, commission_amount")
-      .eq("barber_id", barber.id)
-      .gte("created_at", from)
-      .lt("created_at", to);
+    // One call for the whole day. A failure only hides the "corte gratis" badge; the agenda
+    // itself must load regardless.
+    const pendingClientIds = (appointments ?? [])
+      .filter((a) => a.status === "pending")
+      .map((a) => a.client_id);
+
+    const [{ data: payments }, loyalty] = await Promise.all([
+      // What the barber already collected today (RLS only exposes their own rows).
+      supabase
+        .from("payments")
+        .select("amount, commission_amount")
+        .eq("barber_id", barber.id)
+        .gte("created_at", from)
+        .lt("created_at", to),
+      clientRepo.getLoyaltyForClients(pendingClientIds).catch(() => ({})),
+    ]);
 
     const totals = (payments ?? []).reduce(
       (acc, p) => ({
@@ -83,13 +92,6 @@ export async function getAgendaForDate(date: string): Promise<ActionResult<Agend
       }),
       { turnos: 0, cobrado: 0, comision: 0 }
     );
-
-    // One call for the whole day. A failure only hides the "corte gratis" badge; the agenda
-    // itself must load regardless.
-    const pendingClientIds = (appointments ?? [])
-      .filter((a) => a.status === "pending")
-      .map((a) => a.client_id);
-    const loyalty = await clientRepo.getLoyaltyForClients(pendingClientIds).catch(() => ({}));
 
     const cobrado = Math.round(totals.cobrado * 100) / 100;
     const comision = Math.round(totals.comision * 100) / 100;

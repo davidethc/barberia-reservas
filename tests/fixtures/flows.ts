@@ -47,3 +47,8 @@ export async function setProgram(browser: Browser, enabled: boolean, cycle = 6) 
     await context.close();
   }
 }
+
+/** One client's turn card on the agenda: the block that names them and not `other`. */
+export function agendaCard(page: Page, name: string, other: string) {
+  return page.locator("div").filter({ hasText: name }).filter({ hasNotText: other });
+}

@@ -1438,8 +1438,7 @@ function CompleteDialog({
   const [redeem, setRedeem] = useState(false);
 
   const servicePrice = appointment?.services?.price ?? 0;
-  const defaultAmount = servicePrice;
-  const amountValue = amount === "" ? defaultAmount : Number(amount);
+  const amountValue = amount === "" ? servicePrice : Number(amount);
   const isReward = rewardAvailable && redeem;
   const isValid = isReward || amountValue > 0;
 
@@ -1527,7 +1526,7 @@ function CompleteDialog({
                   min={0}
                   step="0.01"
                   className="h-11"
-                  placeholder={String(defaultAmount)}
+                  placeholder={String(servicePrice)}
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                 />
