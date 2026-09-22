@@ -1,0 +1,31 @@
+name: test
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npx playwright install --with-deps chromium
+      # Sin secretos: la app se levanta contra el Supabase suplente (tests/fixtures).
+      # Las capturas visuales son de macOS; en Linux las fuentes se dibujan distinto, así
+      # que la comparación píxel a píxel corre en local (npm test) y aquí se omite.
+      - run: npx playwright test --grep-invert @visual
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

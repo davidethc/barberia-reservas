@@ -43,3 +43,10 @@ next-env.d.ts
 # Artefactos de sesión (capturas de revisión, navegador de pruebas)
 .impeccable/
 .playwright-cli/
+
+# playwright
+/.next-test/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
