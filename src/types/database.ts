@@ -21,6 +21,7 @@ export type Database = {
           date: string
           end_time: string
           id: string
+          is_reward: boolean
           notes: string | null
           service_id: string
           source: string
@@ -35,6 +36,7 @@ export type Database = {
           date: string
           end_time: string
           id?: string
+          is_reward?: boolean
           notes?: string | null
           service_id: string
           source?: string
@@ -49,6 +51,7 @@ export type Database = {
           date?: string
           end_time?: string
           id?: string
+          is_reward?: boolean
           notes?: string | null
           service_id?: string
           source?: string
@@ -223,6 +226,8 @@ export type Database = {
           created_at: string | null
           id: string
           logo_url: string | null
+          loyalty_cycle: number
+          loyalty_enabled: boolean
           name: string
           phone: string | null
           slug: string
@@ -232,6 +237,8 @@ export type Database = {
           created_at?: string | null
           id?: string
           logo_url?: string | null
+          loyalty_cycle?: number
+          loyalty_enabled?: boolean
           name: string
           phone?: string | null
           slug: string
@@ -241,6 +248,8 @@ export type Database = {
           created_at?: string | null
           id?: string
           logo_url?: string | null
+          loyalty_cycle?: number
+          loyalty_enabled?: boolean
           name?: string
           phone?: string | null
           slug?: string
@@ -429,6 +438,10 @@ export type Database = {
         }
         Returns: string
       }
+      complete_appointment_reward: {
+        Args: { p_appointment_id: string }
+        Returns: string
+      }
       create_public_appointment: {
         Args: {
           p_barber_id: string
@@ -452,12 +465,29 @@ export type Database = {
         }
         Returns: string[]
       }
+      public_loyalty_progress: {
+        Args: { p_business_id: string; p_phone: string }
+        Returns: {
+          cycle: number
+          eligible: boolean
+          progress: number
+        }[]
+      }
       public_bookable_barbers: {
         Args: { p_business_id: string }
         Returns: {
           id: string
           name: string
           photo_url: string | null
+        }[]
+      }
+      staff_client_loyalty: {
+        Args: { p_client_ids: string[] }
+        Returns: {
+          client_id: string
+          cycle: number
+          eligible: boolean
+          progress: number
         }[]
       }
       unlink_barber_account: {
