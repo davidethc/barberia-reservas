@@ -8,6 +8,7 @@
 // Control desde las pruebas:
 //   POST /__seed/<estado>   reinicia los datos (base | loyalty-new | loyalty-4 | loyalty-eligible | loyalty-redeemed)
 //   POST /__fail/<rpc>      hace fallar esa RPC hasta el próximo seed
+//   POST /__loyalty/off     apaga el programa sin tocar nada más (canje que ya no corresponde)
 //   GET  /__state           devuelve las tablas (para aserciones)
 //   GET  /__hits            cuántas peticiones recibió (guarda anti-producción)
 
@@ -567,6 +568,10 @@ async function handle(req, res) {
   }
   if (path.startsWith("/__fail/")) {
     failing.add(path.slice("/__fail/".length));
+    return send(res, 200, { ok: true });
+  }
+  if (path === "/__loyalty/off") {
+    db.businesses[0].loyalty_enabled = false;
     return send(res, 200, { ok: true });
   }
   if (path === "/__state") return send(res, 200, db);

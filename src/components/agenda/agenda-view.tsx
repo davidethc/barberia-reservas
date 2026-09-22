@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Calendar, CalendarDayButton } from "@/components/ui/calendar";
 import { ConfirmDialog } from "@/components/staff/confirm-dialog";
@@ -48,7 +49,7 @@ import {
   shopToday as todayStr,
 } from "@/lib/shop-date";
 import { addMinutesToTime, formatDate, formatMoney, formatPrice, formatTime, cn } from "@/lib/utils";
-import { Ban, CalendarOff, Check, ChevronLeft, ChevronRight, Phone, Trash2 } from "lucide-react";
+import { Ban, CalendarOff, Check, ChevronLeft, ChevronRight, Gift, Phone, Trash2 } from "lucide-react";
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "Pendiente",
@@ -416,15 +417,15 @@ export function AgendaView({
     });
   }
 
-  function handleCompleted(id: string, paymentMethod: "cash" | "transfer", amount: number) {
+  function handleCompleted(id: string, payment: CompletePayment) {
     startMutating(async () => {
-      const result = await completeAppointment({ appointmentId: id, paymentMethod, amount });
+      const result = await completeAppointment({ appointmentId: id, ...payment });
       if (result.success) {
-        toast.success("Turno completado");
+        toast.success(payment.redeemReward ? "Corte gratis aplicado" : "Turno completado");
         setDay((prev) => ({
           ...prev,
           appointments: prev.appointments.map((a) =>
-            a.id === id ? { ...a, status: "completed" } : a
+            a.id === id ? { ...a, status: "completed", is_reward: payment.redeemReward === true } : a
           ),
         }));
         setCompletingId(null);
@@ -595,6 +596,7 @@ export function AgendaView({
                     appointment={item.appointment}
                     isMutating={isMutating}
                     isNext={item.appointment.id === nextPendingId}
+                    rewardAvailable={day.loyalty?.[item.appointment.client_id]?.eligible === true}
                     onComplete={() => setCompletingId(item.id)}
                     onCancel={(reason) => setClosing({ id: item.id, reason })}
                   />
@@ -656,6 +658,10 @@ export function AgendaView({
 
       <CompleteDialog
         appointment={completingAppointment}
+        rewardAvailable={
+          !!completingAppointment &&
+          day.loyalty?.[completingAppointment.client_id]?.eligible === true
+        }
         commissionPct={commissionPct}
         isPending={isMutating}
         onOpenChange={(open) => !open && setCompletingId(null)}
@@ -1255,12 +1261,14 @@ function AppointmentCard({
   appointment,
   isMutating,
   isNext,
+  rewardAvailable,
   onComplete,
   onCancel,
 }: {
   appointment: AgendaAppointment;
   isMutating: boolean;
   isNext: boolean;
+  rewardAvailable: boolean;
   onComplete: () => void;
   onCancel: (reason: "cancelled" | "no_show") => void;
 }) {
@@ -1288,7 +1296,13 @@ function AppointmentCard({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {status === "completed" && appointment.services?.price != null && (
+            {status === "completed" && appointment.is_reward && (
+              <span className="flex items-center gap-1 text-sm font-semibold text-accent">
+                <Gift aria-hidden className="size-4" />
+                Gratis
+              </span>
+            )}
+            {status === "completed" && !appointment.is_reward && appointment.services?.price != null && (
               <span className="text-sm font-semibold tabular-nums">
                 {formatPrice(appointment.services.price)}
               </span>
@@ -1319,9 +1333,17 @@ function AppointmentCard({
                 )}
               </div>
             </div>
-            <Badge variant={STATUS_VARIANT[appointment.status] ?? "outline"}>
-              {STATUS_LABEL[appointment.status] ?? appointment.status}
-            </Badge>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+              {rewardAvailable && (
+                <Badge variant="outline" className="gap-1 border-accent text-accent">
+                  <Gift aria-hidden className="size-3" />
+                  Corte gratis
+                </Badge>
+              )}
+              <Badge variant={STATUS_VARIANT[appointment.status] ?? "outline"}>
+                {STATUS_LABEL[appointment.status] ?? appointment.status}
+              </Badge>
+            </div>
           </div>
 
           <div className="flex items-center justify-between gap-2 rounded-lg bg-muted pl-3">
@@ -1376,28 +1398,40 @@ function AppointmentCard({
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+/** What closing a turn records: a charge as before, or the client's free turn. */
+type CompletePayment =
+  | { redeemReward: true }
+  | { redeemReward?: false; paymentMethod: "cash" | "transfer"; amount: number };
+
 function CompleteDialog({
   appointment,
+  rewardAvailable,
   commissionPct,
   isPending,
   onOpenChange,
   onConfirm,
 }: {
   appointment: AgendaAppointment | null;
+  rewardAvailable: boolean;
   commissionPct: number;
   isPending: boolean;
   onOpenChange: (open: boolean) => void;
-  onConfirm: (id: string, paymentMethod: "cash" | "transfer", amount: number) => void;
+  onConfirm: (id: string, payment: CompletePayment) => void;
 }) {
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "transfer">("cash");
   const [amount, setAmount] = useState("");
+  // Off by default: using up a client's reward is always the barber's explicit call.
+  const [redeem, setRedeem] = useState(false);
 
-  const defaultAmount = appointment?.services?.price ?? 0;
+  const servicePrice = appointment?.services?.price ?? 0;
+  const defaultAmount = servicePrice;
   const amountValue = amount === "" ? defaultAmount : Number(amount);
-  const isValid = amountValue > 0;
+  const isReward = rewardAvailable && redeem;
+  const isValid = isReward || amountValue > 0;
 
   const pct = commissionPct ?? 40;
-  const comision = round2((amountValue * pct) / 100);
+  // On a free turn the shop absorbs the reward: the commission is on the service price.
+  const comision = round2(((isReward ? servicePrice : amountValue) * pct) / 100);
   const teQueda = round2(amountValue - comision);
 
   return (
@@ -1408,6 +1442,7 @@ function CompleteDialog({
         if (!open) {
           setPaymentMethod("cash");
           setAmount("");
+          setRedeem(false);
         }
       }}
     >
@@ -1420,54 +1455,85 @@ function CompleteDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Método de pago</Label>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant={paymentMethod === "cash" ? "default" : "outline"}
-                className="h-11 flex-1"
-                onClick={() => setPaymentMethod("cash")}
-              >
-                Efectivo
-              </Button>
-              <Button
-                type="button"
-                variant={paymentMethod === "transfer" ? "default" : "outline"}
-                className="h-11 flex-1"
-                onClick={() => setPaymentMethod("transfer")}
-              >
-                Transferencia
-              </Button>
-            </div>
-          </div>
+          {rewardAvailable && (
+            <label className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-accent/60 px-4 py-3">
+              <span className="flex items-start gap-2.5">
+                <Gift aria-hidden className="mt-0.5 size-4 shrink-0 text-accent" />
+                <span>
+                  <span className="block text-sm font-medium">Aplicar corte gratis</span>
+                  <span className="block text-sm text-muted-foreground">
+                    Este cliente completó su tarjeta de sellos.
+                  </span>
+                </span>
+              </span>
+              <Switch checked={redeem} onCheckedChange={setRedeem} aria-label="Aplicar corte gratis" />
+            </label>
+          )}
 
-          <div className="space-y-1.5">
-            <Label htmlFor="amount">Monto</Label>
-            <Input
-              id="amount"
-              name="amount"
-              type="number"
-              inputMode="decimal"
-              autoComplete="off"
-              min={0}
-              step="0.01"
-              className="h-11"
-              placeholder={String(defaultAmount)}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-          </div>
+          {isReward ? (
+            <div className="flex items-center justify-between gap-4 text-sm">
+              <span className="text-muted-foreground">Monto</span>
+              <span className="tabular-nums font-bold">{formatMoney(0)}</span>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <Label>Método de pago</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant={paymentMethod === "cash" ? "default" : "outline"}
+                    className="h-11 flex-1"
+                    onClick={() => setPaymentMethod("cash")}
+                  >
+                    Efectivo
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={paymentMethod === "transfer" ? "default" : "outline"}
+                    className="h-11 flex-1"
+                    onClick={() => setPaymentMethod("transfer")}
+                  >
+                    Transferencia
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="amount">Monto</Label>
+                <Input
+                  id="amount"
+                  name="amount"
+                  type="number"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  min={0}
+                  step="0.01"
+                  className="h-11"
+                  placeholder={String(defaultAmount)}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+              </div>
+            </>
+          )}
 
           <div className="rounded-xl border border-border bg-muted/60 px-4 py-3">
             <div className="flex items-center justify-between gap-4 text-sm">
               <span className="text-muted-foreground">Comisión ({pct}%)</span>
               <span className="tabular-nums font-medium">{formatMoney(comision)}</span>
             </div>
-            <div className="mt-1 flex items-center justify-between gap-4 text-sm">
-              <span className="text-muted-foreground">Te queda ({100 - pct}%)</span>
-              <span className="tabular-nums font-bold">{formatMoney(teQueda)}</span>
-            </div>
+            {isReward ? (
+              <p className="mt-1 text-sm text-muted-foreground">
+                Sobre {formatMoney(servicePrice)}, el precio del servicio. El corte gratis lo
+                absorbe el local.
+              </p>
+            ) : (
+              <div className="mt-1 flex items-center justify-between gap-4 text-sm">
+                <span className="text-muted-foreground">Te queda ({100 - pct}%)</span>
+                <span className="tabular-nums font-bold">{formatMoney(teQueda)}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1475,9 +1541,15 @@ function CompleteDialog({
           <Button
             className="h-11 w-full text-base"
             disabled={!isValid || isPending || !appointment}
-            onClick={() => appointment && onConfirm(appointment.id, paymentMethod, amountValue)}
+            onClick={() =>
+              appointment &&
+              onConfirm(
+                appointment.id,
+                isReward ? { redeemReward: true } : { paymentMethod, amount: amountValue }
+              )
+            }
           >
-            {isPending ? "Guardando…" : "Confirmar"}
+            {isPending ? "Guardando…" : isReward ? "Confirmar corte gratis" : "Confirmar"}
           </Button>
         </DialogFooter>
       </DialogContent>

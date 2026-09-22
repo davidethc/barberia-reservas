@@ -24,6 +24,11 @@ export async function failRpc(name: string) {
   await fetch(`${STUB_URL}/__fail/${name}`, { method: "POST" });
 }
 
+/** Turns the program off behind the app's back, as if the owner did it mid-shift. */
+export async function turnLoyaltyOff() {
+  await fetch(`${STUB_URL}/__loyalty/off`, { method: "POST" });
+}
+
 type StubState = {
   appointments: { id: string; client_id: string; status: string; is_reward: boolean; date: string; start_time: string }[];
   payments: { appointment_id: string; amount: number; payment_method: string; commission_amount: number }[];
