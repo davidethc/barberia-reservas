@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { seed } from "../fixtures/stub";
+import { setProgram } from "../fixtures/flows";
 
 // Línea base visual del lado del cliente, tomada sobre el código de ANTES del programa de
 // fidelidad. Con `loyalty_enabled = false` estas capturas tienen que seguir idénticas: es
@@ -9,6 +10,11 @@ import { seed } from "../fixtures/stub";
 // captura no cambia de un día a otro.
 
 test.use({ reducedMotion: "reduce" });
+
+// Program off, whatever an earlier spec left in the cached booking data.
+test.beforeAll(async ({ browser }) => {
+  await setProgram(browser, false);
+});
 
 test.beforeEach(async () => {
   await seed("base");

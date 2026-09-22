@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { Clock, MapPin, MessageCircle, Star, ChevronRight } from "lucide-react";
+import { Clock, Gift, MapPin, MessageCircle, Star, ChevronRight } from "lucide-react";
 import { getBookingData } from "@/app/actions/booking";
 import { SiteHeader, Monogram } from "@/components/monky/site-header";
 import { PillLink } from "@/components/monky/pill-link";
@@ -18,10 +18,12 @@ import {
   mapsUrl,
   toWhatsAppNumber,
 } from "@/lib/brand";
+import { DEFAULT_LOYALTY_CYCLE, ordinalTurn } from "@/lib/loyalty";
 
 export default async function HomePage() {
   const { services, barbers, business, hours } = await getBookingData();
   const featured = services.slice(0, 3);
+  const loyaltyCycle = business.loyalty_cycle ?? DEFAULT_LOYALTY_CYCLE;
   const schedule = groupHours(hours);
   const whatsapp = business.phone
     ? `https://wa.me/${toWhatsAppNumber(business.phone)}?text=${encodeURIComponent(`Hola ${BRAND_NAME}, tengo una consulta.`)}`
@@ -67,19 +69,37 @@ export default async function HomePage() {
             </PillLink>
           </div>
 
-          {/* MOCKUP: rating and client count are placeholders until real figures exist. */}
-          <p
-            className="mk-rise mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground"
-            style={{ "--mk-delay": "340ms" } as React.CSSProperties}
-          >
-            <Star aria-hidden className="size-4 fill-primary text-primary" />
-            <span>
-              <strong className="font-bold text-foreground tabular-nums">{SOCIAL_PROOF.rating.toFixed(1)}</strong>
-              <span aria-hidden> · </span>
-              <span className="sr-only">de 5, </span>
-              {SOCIAL_PROOF.clients} clientes atendidos
-            </span>
-          </p>
+          {business.loyalty_enabled ? (
+            // A real promise in place of the made-up rating: the client learns about the
+            // stamp card before booking.
+            <p
+              className="mk-rise mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground"
+              style={{ "--mk-delay": "340ms" } as React.CSSProperties}
+            >
+              <Gift aria-hidden className="size-4 text-primary" strokeWidth={2} />
+              <span>
+                <strong className="font-bold text-foreground">
+                  El {ordinalTurn(loyaltyCycle)} corte va por la casa
+                </strong>
+                <span aria-hidden> · </span>
+                sin registrarte, con tu celular
+              </span>
+            </p>
+          ) : (
+            // MOCKUP: rating and client count are placeholders until real figures exist.
+            <p
+              className="mk-rise mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground"
+              style={{ "--mk-delay": "340ms" } as React.CSSProperties}
+            >
+              <Star aria-hidden className="size-4 fill-primary text-primary" />
+              <span>
+                <strong className="font-bold text-foreground tabular-nums">{SOCIAL_PROOF.rating.toFixed(1)}</strong>
+                <span aria-hidden> · </span>
+                <span className="sr-only">de 5, </span>
+                {SOCIAL_PROOF.clients} clientes atendidos
+              </span>
+            </p>
+          )}
         </section>
 
         <section id="servicios" aria-labelledby="servicios-titulo" className="mt-14 scroll-mt-20 px-5">

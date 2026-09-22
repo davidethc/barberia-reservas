@@ -1,24 +1,18 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { reachDetails, setProgram } from "../fixtures/flows";
 import { seed, stubState } from "../fixtures/stub";
 
 // Regresión del flujo de reserva tal como existe hoy. Incluye los cinco escenarios de
 // testsprite-plans/, reescritos para el wizard actual de cinco pasos.
 
+// Program off, whatever an earlier spec left in the cached booking data.
+test.beforeAll(async ({ browser }) => {
+  await setProgram(browser, false);
+});
+
 test.beforeEach(async () => {
   await seed("base");
 });
-
-async function reachDetails(page: Page) {
-  await page.goto("/reservar");
-  await page.getByRole("button", { name: /Corte clásico/ }).click();
-  await expect(page.getByRole("heading", { name: "Elige tu barbero" })).toBeVisible();
-  await page.getByRole("button", { name: "Bruno" }).click();
-  await expect(page.getByRole("heading", { name: "Elige día y hora" })).toBeVisible();
-  // El segundo día nunca tiene horarios ya pasados, así que el test no depende de la hora.
-  await page.getByRole("group", { name: "Fecha" }).getByRole("button").nth(1).click();
-  await page.getByRole("region", { name: "Tarde" }).getByRole("button", { name: "13:00" }).click();
-  await expect(page.getByRole("heading", { name: "Déjanos tus datos" })).toBeVisible();
-}
 
 test("camino feliz: el cliente reserva de punta a punta", async ({ page }) => {
   await reachDetails(page);
