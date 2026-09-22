@@ -234,7 +234,7 @@ export function AgendaView({
         setDay(result.data);
       } else {
         toast.error(result.error);
-        setDay({ appointments: [], blocks: [], summary: { turnos: 0, cobrado: 0, comision: 0, teQueda: 0 } });
+        setDay({ appointments: [], blocks: [], summary: { turnos: 0, cobrado: 0, comision: 0, teQueda: 0 }, loyalty: {} });
       }
     });
   }

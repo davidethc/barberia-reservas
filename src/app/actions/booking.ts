@@ -1,13 +1,18 @@
 "use server";
 
 import { unstable_cache } from "next/cache";
-import { CreateAnyBarberAppointmentSchema, CreateAppointmentSchema } from "@/lib/schemas/booking";
+import {
+  CreateAnyBarberAppointmentSchema,
+  CreateAppointmentSchema,
+  LoyaltyPhoneSchema,
+} from "@/lib/schemas/booking";
 import { appointmentRepo } from "@/lib/repositories/appointments";
 import { addMinutesToTime } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createPublicClient } from "@/lib/supabase/client";
 import { BUSINESS_ID, LUNCH_END, LUNCH_START } from "@/lib/constants";
 import { BOOKING_DATA_TAG } from "@/lib/cache-tags";
+import { DEFAULT_LOYALTY_CYCLE, toLoyaltyProgress, type LoyaltyProgress } from "@/lib/loyalty";
 import {
   getShopDates,
   shopNowTime,
@@ -117,7 +122,7 @@ const getCachedBookingData = unstable_cache(
         supabase.rpc("public_bookable_barbers", { p_business_id: BUSINESS_ID }),
         supabase
           .from("businesses")
-          .select("name, phone, address")
+          .select("name, phone, address, loyalty_enabled, loyalty_cycle")
           .eq("id", BUSINESS_ID)
           .single(),
         supabase
@@ -130,14 +135,21 @@ const getCachedBookingData = unstable_cache(
     return {
       services: services ?? [],
       barbers: barbers ?? [],
-      business: business ?? { name: "", phone: "", address: "" },
+      business: business ?? {
+        name: "",
+        phone: "",
+        address: "",
+        loyalty_enabled: false,
+        loyalty_cycle: DEFAULT_LOYALTY_CYCLE,
+      },
       // Fails open: if the hours can't be read we offer every day rather than hiding
       // days the shop is actually working.
       openDays: hours ? hours.filter((h) => h.is_open).map((h) => h.day_of_week) : [0, 1, 2, 3, 4, 5, 6],
       hours: hours ?? [],
     };
   },
-  ["public-booking-data-v2"],
+  // v3: the Data Cache outlives a deploy, and a v2 entry has no loyalty fields.
+  ["public-booking-data-v3"],
   { revalidate: 45, tags: [BOOKING_DATA_TAG] }
 );
 
@@ -240,4 +252,32 @@ export async function createAppointmentAnyBarber(
   }
 
   return { success: false, error: BOOKING_ERROR_MESSAGES.BOOKING_SLOT_TAKEN! };
+}
+
+/**
+ * The stamp card for whoever is typing this phone. Deliberately outside `unstable_cache`:
+ * it is per client, not shared. `public_loyalty_progress` answers only numbers, and an
+ * unknown phone reads exactly like a brand-new client, so this never confirms whether a
+ * number belongs to someone or reveals a name. Any failure is just "no card shown" — a
+ * reward that could not be read must never stand in the way of a booking.
+ */
+export async function getLoyaltyProgress(
+  phone: unknown
+): Promise<ActionResult<LoyaltyProgress>> {
+  const parsed = LoyaltyPhoneSchema.safeParse(phone);
+  if (!parsed.success) return { success: false, error: "Datos inválidos" };
+
+  try {
+    const supabase = createPublicClient();
+    const { data, error } = await supabase.rpc("public_loyalty_progress", {
+      p_business_id: BUSINESS_ID,
+      p_phone: parsed.data,
+    });
+
+    const progress = error ? null : toLoyaltyProgress(data?.[0]);
+    if (!progress) return { success: false, error: "No se pudo leer la tarjeta" };
+    return { success: true, data: progress };
+  } catch {
+    return { success: false, error: "No se pudo leer la tarjeta" };
+  }
 }

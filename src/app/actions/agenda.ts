@@ -6,6 +6,8 @@ import { getCurrentBarber } from "@/lib/staff";
 import { appointmentRepo } from "@/lib/repositories/appointments";
 import { barberScheduleRepo } from "@/lib/repositories/barber-schedules";
 import { paymentRepo } from "@/lib/repositories/payments";
+import { clientRepo } from "@/lib/repositories/clients";
+import type { LoyaltyProgress } from "@/lib/loyalty";
 import { CompleteAppointmentSchema, CancelAppointmentSchema } from "@/lib/schemas/booking";
 import { CreateBlockSchema, DeleteBlockSchema } from "@/lib/schemas/schedule";
 import { canTransition, type ActionResult, type AppointmentStatus } from "@/lib/appointment-states";
@@ -14,6 +16,8 @@ import { addDays, getLocalDayWindow } from "@/lib/shop-date";
 
 export type AgendaAppointment = {
   id: string;
+  client_id: string;
+  is_reward: boolean;
   date: string;
   start_time: string;
   end_time: string;
@@ -42,6 +46,8 @@ export type AgendaDay = {
   appointments: AgendaAppointment[];
   blocks: AgendaBlock[];
   summary: DaySummary;
+  /** Stamp card per client_id, only for the day's pending turns. Empty when unreadable. */
+  loyalty: Record<string, LoyaltyProgress>;
 };
 
 export async function getAgendaForDate(date: string): Promise<ActionResult<AgendaDay>> {
@@ -78,6 +84,13 @@ export async function getAgendaForDate(date: string): Promise<ActionResult<Agend
       { turnos: 0, cobrado: 0, comision: 0 }
     );
 
+    // One call for the whole day. A failure only hides the "corte gratis" badge; the agenda
+    // itself must load regardless.
+    const pendingClientIds = (appointments ?? [])
+      .filter((a) => a.status === "pending")
+      .map((a) => a.client_id);
+    const loyalty = await clientRepo.getLoyaltyForClients(pendingClientIds).catch(() => ({}));
+
     const cobrado = Math.round(totals.cobrado * 100) / 100;
     const comision = Math.round(totals.comision * 100) / 100;
 
@@ -92,6 +105,7 @@ export async function getAgendaForDate(date: string): Promise<ActionResult<Agend
           comision,
           teQueda: Math.round((cobrado - comision) * 100) / 100,
         },
+        loyalty,
       },
     };
   } catch {
@@ -185,6 +199,7 @@ const COMPLETE_ERROR_MESSAGES: Record<string, string> = {
   COMPLETE_NOT_FOUND: "Turno no encontrado",
   COMPLETE_NOT_PENDING: "Este turno ya no se puede completar",
   COMPLETE_INVALID_INPUT: "Datos inválidos",
+  COMPLETE_REWARD_NOT_ELIGIBLE: "Este cliente ya no tiene un corte gratis disponible.",
 };
 
 function completeErrorMessage(error: unknown, fallback: string): string {
@@ -214,10 +229,10 @@ export async function completeAppointment(
     return { success: false, error: "Datos inválidos" };
   }
 
-  const { appointmentId, paymentMethod, amount } = parsed.data;
+  const { appointmentId } = parsed.data;
 
   try {
-    await paymentRepo.completeAppointment({ appointmentId, paymentMethod, amount });
+    await paymentRepo.completeAppointment(parsed.data);
     revalidatePath("/agenda");
     return { success: true, data: { appointmentId } };
   } catch (error) {

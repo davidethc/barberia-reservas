@@ -10,6 +10,8 @@ import { isCurrentUserAdmin } from "@/lib/staff";
 import { serviceRepo } from "@/lib/repositories/services";
 import { barberRepo } from "@/lib/repositories/barbers";
 import { businessHoursRepo } from "@/lib/repositories/business-hours";
+import { businessRepo } from "@/lib/repositories/business";
+import { DEFAULT_LOYALTY_CYCLE, type LoyaltySettings } from "@/lib/loyalty";
 import {
   clientRepo,
   type ClientListItem,
@@ -31,6 +33,7 @@ import {
   ResetBarberPasswordSchema,
   BusinessHoursInputSchema,
   CommissionsReportRangeSchema,
+  LoyaltySettingsSchema,
 } from "@/lib/schemas/admin";
 
 // ---------- Reads (used by the admin page Server Component) ----------
@@ -45,15 +48,19 @@ export async function getAdminData() {
   // Also the gate for the /admin page itself: the page renders whatever this returns.
   if (!(await isCurrentUserAdmin())) redirect("/agenda");
 
-  const [services, barbers, businessHours, clients] = await Promise.all([
+  const [services, barbers, businessHours, clients, loyalty] = await Promise.all([
     serviceRepo.getAll(),
     barberRepo.getAll(),
     businessHoursRepo.getAll(),
     // A failing clients query shows an error inside its own tab instead of blanking /admin.
     loadClientsSnapshot().catch(() => null),
+    // Same for the stamp card: the panel opens with the defaults instead of breaking /admin.
+    businessRepo
+      .getLoyalty()
+      .catch((): LoyaltySettings => ({ enabled: false, cycle: DEFAULT_LOYALTY_CYCLE })),
   ]);
 
-  return { services, barbers, businessHours, clients };
+  return { services, barbers, businessHours, clients, loyalty };
 }
 
 async function loadClientsSnapshot(term = "", sort: "visits" | "recent" | "name" = "visits") {
@@ -61,7 +68,16 @@ async function loadClientsSnapshot(term = "", sort: "visits" | "recent" | "name"
     clientRepo.search({ term, sort }),
     clientRepo.getStats(),
   ]);
-  return { ...page, stats };
+  return { ...page, items: await withLoyalty(page.items), stats };
+}
+
+/** Adds each client's stamp card. Unreadable progress leaves the list as it was. */
+async function withLoyalty(items: ClientListItem[]): Promise<ClientListItem[]> {
+  const byClient = await clientRepo
+    .getLoyaltyForClients(items.map((c) => c.id))
+    .catch(() => null);
+  if (!byClient) return items;
+  return items.map((c) => ({ ...c, loyalty: byClient[c.id] ?? null }));
 }
 
 // ---------- Services ----------
@@ -336,7 +352,10 @@ export async function searchClients(
 
   try {
     const page = await clientRepo.search(parsed.data);
-    return { success: true, data: { ...page, offset: parsed.data.offset } };
+    return {
+      success: true,
+      data: { ...page, items: await withLoyalty(page.items), offset: parsed.data.offset },
+    };
   } catch {
     return { success: false, error: "No se pudieron cargar los clientes" };
   }
@@ -487,6 +506,29 @@ export async function updateBusinessHours(input: unknown): Promise<ActionResult<
     return { success: true, data: null };
   } catch {
     return { success: false, error: "No se pudo actualizar el horario" };
+  }
+}
+
+// ---------- Loyalty ----------
+
+export async function updateLoyaltySettings(
+  input: unknown
+): Promise<ActionResult<LoyaltySettings>> {
+  if (!(await isCurrentUserAdmin())) return { success: false, error: "No autorizado" };
+
+  const parsed = LoyaltySettingsSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
+  }
+
+  try {
+    const saved = await businessRepo.updateLoyalty(parsed.data);
+    revalidatePath("/admin");
+    // The wizard and the home read the program from the cached booking data.
+    updateTag(BOOKING_DATA_TAG);
+    return { success: true, data: saved };
+  } catch {
+    return { success: false, error: "No se pudo guardar el programa de fidelidad" };
   }
 }
 

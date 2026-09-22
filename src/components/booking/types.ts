@@ -18,6 +18,9 @@ export type Business = {
   name: string;
   phone: string | null;
   address: string | null;
+  /** Optional so a booking-data entry cached before the stamp card still type-checks. */
+  loyalty_enabled?: boolean;
+  loyalty_cycle?: number;
 };
 
 /**

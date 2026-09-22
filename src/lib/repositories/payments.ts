@@ -9,12 +9,23 @@ export const paymentRepo = {
    * `payments`, so there is no path that could write a commission of its own choosing.
    * The raised error is passed through untouched for the action layer to map to a message.
    */
-  async completeAppointment(data: {
-    appointmentId: string;
-    amount: number;
-    paymentMethod: "cash" | "transfer";
-  }) {
+  async completeAppointment(
+    data:
+      | { redeemReward: true; appointmentId: string }
+      | { redeemReward?: false; appointmentId: string; amount: number; paymentMethod: "cash" | "transfer" }
+  ) {
     const supabase = await createClient();
+
+    // The free turn goes through its own function so the charging path below stays exactly
+    // as it was: `complete_appointment` is never called with anything new.
+    if (data.redeemReward) {
+      const { data: paymentId, error } = await supabase.rpc("complete_appointment_reward", {
+        p_appointment_id: data.appointmentId,
+      });
+
+      if (error) throw error;
+      return paymentId;
+    }
 
     const { data: paymentId, error } = await supabase.rpc("complete_appointment", {
       p_appointment_id: data.appointmentId,

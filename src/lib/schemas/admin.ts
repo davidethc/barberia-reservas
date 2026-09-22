@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_LOYALTY_CYCLE, MIN_LOYALTY_CYCLE } from "@/lib/loyalty";
 
 export const ServiceInputSchema = z.object({
   name: z.string().trim().min(2, "Mínimo 2 caracteres").max(100),
@@ -76,6 +77,15 @@ export const BusinessHoursInputSchema = z.object({
   isOpen: z.boolean(),
 });
 
+export const LoyaltySettingsSchema = z.object({
+  enabled: z.boolean(),
+  cycle: z
+    .number()
+    .int("Tiene que ser un número entero")
+    .min(MIN_LOYALTY_CYCLE, `Mínimo ${MIN_LOYALTY_CYCLE}`)
+    .max(MAX_LOYALTY_CYCLE, `Máximo ${MAX_LOYALTY_CYCLE}`),
+});
+
 export const CommissionsReportRangeSchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -88,4 +98,5 @@ export type UpdateBarberInput = z.infer<typeof UpdateBarberSchema>;
 export type LinkBarberAccountInput = z.infer<typeof LinkBarberAccountSchema>;
 export type CreateBarberWithAccountInput = z.infer<typeof CreateBarberWithAccountSchema>;
 export type BusinessHoursInput = z.infer<typeof BusinessHoursInputSchema>;
+export type LoyaltySettingsInput = z.infer<typeof LoyaltySettingsSchema>;
 export type CommissionsReportRange = z.infer<typeof CommissionsReportRangeSchema>;

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { BUSINESS_ID } from "@/lib/constants";
+import { toLoyaltyProgress, type LoyaltyProgress } from "@/lib/loyalty";
 
 export type ClientSort = "visits" | "recent" | "name";
 
@@ -10,6 +11,8 @@ export type ClientListItem = {
   visit_count: number | null;
   last_visit: string | null;
   notes: string | null;
+  /** Filled by the admin actions when the stamp card is readable; absent otherwise. */
+  loyalty?: LoyaltyProgress | null;
 };
 
 export type ClientStats = {
@@ -123,6 +126,28 @@ export const clientRepo = {
       returning: returning.count ?? 0,
       recent: recent.count ?? 0,
     };
+  },
+
+  /**
+   * Stamp progress for a batch of clients, in one call. `staff_client_loyalty` is security
+   * definer on purpose: a barber only sees their own turns through RLS, and a client's stamps
+   * count visits with every barber. Scoped in Postgres to the caller's shop.
+   */
+  async getLoyaltyForClients(clientIds: string[]): Promise<Record<string, LoyaltyProgress>> {
+    if (clientIds.length === 0) return {};
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("staff_client_loyalty", {
+      p_client_ids: [...new Set(clientIds)],
+    });
+
+    if (error) throw error;
+
+    const byClient: Record<string, LoyaltyProgress> = {};
+    for (const row of data ?? []) {
+      const progress = toLoyaltyProgress(row);
+      if (progress) byClient[row.client_id] = progress;
+    }
+    return byClient;
   },
 
   async updateNotes(id: string, notes: string): Promise<ClientListItem> {
