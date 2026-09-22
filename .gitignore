@@ -43,3 +43,8 @@ next-env.d.ts
 # Artefactos de sesión (capturas de revisión, navegador de pruebas)
 .impeccable/
 .playwright-cli/
+
+# Salidas de las capturas de marketing (regenerables con marketing/scripts)
+/marketing/capturas-crudas/
+/marketing/posts-1080x1350/
+/marketing/banner-linkedin-1200x627.png
