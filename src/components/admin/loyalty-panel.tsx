@@ -46,7 +46,7 @@ export function LoyaltyPanel({ initial }: { initial: LoyaltySettings }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div data-slot="loyalty-panel" className="space-y-4">
       <h2 className="font-heading text-lg font-semibold">Fidelidad</h2>
 
       <Card>

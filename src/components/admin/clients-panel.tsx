@@ -314,7 +314,7 @@ function ClientRow({
             </Badge>
           )}
           {card?.eligible && (
-            <Badge variant="outline" className="shrink-0 gap-1 border-accent text-accent">
+            <Badge variant="outline" className="shrink-0 gap-1 border-accent text-accent-strong">
               <Star className="size-3" />
               Corte gratis
             </Badge>

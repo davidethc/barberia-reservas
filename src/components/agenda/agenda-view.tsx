@@ -1307,7 +1307,7 @@ function AppointmentCard({
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {status === "completed" && appointment.is_reward && (
-              <span className="flex items-center gap-1 text-sm font-semibold text-accent">
+              <span className="flex items-center gap-1 text-sm font-semibold text-accent-strong">
                 <Gift aria-hidden className="size-4" />
                 Gratis
               </span>
@@ -1345,7 +1345,11 @@ function AppointmentCard({
             </div>
             <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
               {rewardAvailable && (
-                <Badge variant="outline" className="gap-1 border-accent text-accent">
+                <Badge
+                  data-slot="loyalty-badge"
+                  variant="outline"
+                  className="gap-1 border-accent text-accent-strong"
+                >
                   <Gift aria-hidden className="size-3" />
                   Corte gratis
                 </Badge>
@@ -1466,7 +1470,10 @@ function CompleteDialog({
 
         <div className="space-y-4">
           {rewardAvailable && (
-            <label className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-accent/60 px-4 py-3">
+            <label
+              data-slot="loyalty-redeem"
+              className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-accent/60 px-4 py-3"
+            >
               <span className="flex items-start gap-2.5">
                 <Gift aria-hidden className="mt-0.5 size-4 shrink-0 text-accent" />
                 <span>

@@ -73,6 +73,7 @@ export default async function HomePage() {
             // A real promise in place of the made-up rating: the client learns about the
             // stamp card before booking.
             <p
+              data-slot="loyalty-home"
               className="mk-rise mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground"
               style={{ "--mk-delay": "340ms" } as React.CSSProperties}
             >

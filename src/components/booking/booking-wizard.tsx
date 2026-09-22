@@ -974,7 +974,7 @@ function SummaryStep({
         </div>
         {/* The real price stays above: the free turn is applied by the barber when paying. */}
         {loyaltyCard?.eligible && (
-          <p className="border-t border-border px-5 py-3 text-sm">
+          <p data-slot="loyalty-summary" className="border-t border-border px-5 py-3 text-sm">
             <strong className="font-bold text-primary">Corte gratis</strong>{" "}
             <span className="text-muted-foreground">
               por tus {paidTurnsPerReward(loyaltyCard.cycle)} visitas · se aplica al pagar en el local.

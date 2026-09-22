@@ -31,6 +31,7 @@ export function LoyaltyStamps({
 
   return (
     <div
+      data-slot="loyalty-stamps"
       className={cn(
         "rounded-[20px] bg-card px-5 py-4 shadow-card",
         card.eligible && "ring-1 ring-primary/60",
