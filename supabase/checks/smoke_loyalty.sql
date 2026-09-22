@@ -5,7 +5,7 @@
 -- que Postgres deshace cada turno, cliente y pago que creó, sin depender de que quien lo
 -- ejecute respete un BEGIN/ROLLBACK.
 --
---   Éxito  → ERROR: SMOKE_OK 12/12 (todo se deshizo)
+--   Éxito  → ERROR: SMOKE_OK 14/14 (todo se deshizo)
 --   Fallo  → ERROR: SMOKE <n>: <qué no cuadró>
 --
 -- Los turnos de ensayo van en el año 2000 para no chocar con idx_no_double_booking
@@ -24,6 +24,8 @@ declare
   v_appt2 uuid;
   v_appt3 uuid;
   v_appt4 uuid;
+  v_client2 uuid;
+  v_other_service uuid;
   v_payment uuid;
   v_cycle integer;
   v_progress integer;
@@ -209,6 +211,14 @@ begin
     (v_business, v_barber, v_service, v_client, date '2000-02-01', '14:00', '14:45', 'pending')
   returning id into v_appt3;
 
+  insert into public.clients (business_id, name, phone)
+  values (v_business, 'Amigo de ensayo', v_unknown_phone)
+  returning id into v_client2;
+
+  select id into v_other_service
+  from public.services where business_id = v_business and id <> v_service
+  limit 1;
+
   execute 'set local role authenticated';
 
   -- 9. no puede marcarse un canje
@@ -233,6 +243,30 @@ begin
       end if;
   end;
 
+  -- 13. no puede pasar un turno a la ficha de otro cliente (sellos regalados)
+  begin
+    update public.appointments set client_id = v_client2 where id = v_appt2;
+    raise exception 'SMOKE 13: authenticated pudo mover un turno a otro cliente';
+  exception
+    when insufficient_privilege then
+      if sqlerrm not like '%APPOINTMENT_FIELD_LOCKED%' then
+        raise exception 'SMOKE 13: falló con el error equivocado: %', sqlerrm;
+      end if;
+  end;
+
+  -- 14. no puede cambiar el servicio (comisión inflada en un canje)
+  if v_other_service is not null then
+    begin
+      update public.appointments set service_id = v_other_service where id = v_appt3;
+      raise exception 'SMOKE 14: authenticated pudo cambiar el servicio de un turno';
+    exception
+      when insufficient_privilege then
+        if sqlerrm not like '%APPOINTMENT_FIELD_LOCKED%' then
+          raise exception 'SMOKE 14: falló con el error equivocado: %', sqlerrm;
+        end if;
+    end;
+  end if;
+
   -- 11. cancelar sigue funcionando igual que hoy
   update public.appointments set status = 'cancelled' where id = v_appt3;
   if not found then
@@ -246,5 +280,5 @@ begin
     raise exception 'SMOKE 11: el turno quedó en % en vez de cancelled', v_status;
   end if;
 
-  raise exception 'SMOKE_OK 12/12 (todo se deshizo)';
+  raise exception 'SMOKE_OK 14/14 (todo se deshizo)';
 end $$;
