@@ -256,9 +256,10 @@ export async function createAppointmentAnyBarber(
 
 /**
  * The stamp card for whoever is typing this phone. Deliberately outside `unstable_cache`:
- * it is per client, not shared. `public_loyalty_progress` answers only numbers, and an
- * unknown phone reads exactly like a brand-new client, so this never confirms whether a
- * number belongs to someone or reveals a name. Any failure is just "no card shown" — a
+ * it is per client, not shared. `public_loyalty_progress` answers only numbers, never a
+ * name. An unknown phone reads like a client with no stamps, but a phone with stamps does
+ * reveal it belongs to a client and their paid-visit count; the owner accepted that (only
+ * numbers, no personal data). Any failure is just "no card shown" — a
  * reward that could not be read must never stand in the way of a booking.
  */
 export async function getLoyaltyProgress(

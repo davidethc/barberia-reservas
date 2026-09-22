@@ -12,7 +12,13 @@ export const STAFF = {
   barber: { email: "barbero@monky.test", password: "monky-test-1" },
 } as const;
 
-export type Seed = "base" | "loyalty-new" | "loyalty-4" | "loyalty-eligible" | "loyalty-redeemed";
+export type Seed =
+  | "base"
+  | "loyalty-new"
+  | "loyalty-4"
+  | "loyalty-eligible"
+  | "loyalty-eligible-two"
+  | "loyalty-redeemed";
 
 export async function seed(name: Seed) {
   const res = await fetch(`${STUB_URL}/__seed/${name}`, { method: "POST" });

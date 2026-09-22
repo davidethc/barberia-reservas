@@ -6,7 +6,7 @@
 // aritmética SQL y los permisos sean correctos) lo cubre supabase/checks/smoke_loyalty.sql.
 //
 // Control desde las pruebas:
-//   POST /__seed/<estado>   reinicia los datos (base | loyalty-new | loyalty-4 | loyalty-eligible | loyalty-redeemed)
+//   POST /__seed/<estado>   reinicia los datos (base | loyalty-new | loyalty-4 | loyalty-eligible | loyalty-eligible-two | loyalty-redeemed)
 //   POST /__fail/<rpc>      hace fallar esa RPC hasta el próximo seed
 //   POST /__loyalty/off     apaga el programa sin tocar nada más (canje que ya no corresponde)
 //   GET  /__state           devuelve las tablas (para aserciones)
@@ -130,6 +130,11 @@ const SEEDS = {
     const c = addClient(db, "Luis Fiel", LOYAL_PHONE);
     addPastVisits(db, c, 5);
     addAppointment(db, { client: c, date: shopToday(), time: "18:00", status: "pending" });
+  },
+  "loyalty-eligible-two"(db) {
+    SEEDS["loyalty-eligible"](db);
+    const c = db.clients.find((x) => x.phone === LOYAL_PHONE);
+    addAppointment(db, { client: c, date: shopToday(), time: "09:00", status: "pending" });
   },
   "loyalty-redeemed"(db) {
     SEEDS.base(db);

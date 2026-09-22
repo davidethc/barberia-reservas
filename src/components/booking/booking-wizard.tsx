@@ -19,6 +19,7 @@ import {
   createAppointmentAnyBarber,
   getAnyBarberSlots,
   getAvailableSlots,
+  getLoyaltyProgress,
 } from "@/app/actions/booking";
 import { formatPrice, formatTime, cn } from "@/lib/utils";
 import { BRAND_NAME, toWhatsAppNumber } from "@/lib/brand";
@@ -31,6 +32,8 @@ import { Monogram } from "@/components/monky/site-header";
 import { BarberAvatar } from "@/components/monky/barber-card";
 import { ServiceRowContent, serviceRowClasses } from "@/components/monky/service-row";
 import { pillClasses } from "@/components/monky/pill-link";
+import { LoyaltyStamps } from "@/components/monky/loyalty-stamps";
+import { paidTurnsPerReward, type LoyaltyProgress } from "@/lib/loyalty";
 
 type Props = {
   services: Service[];
@@ -94,6 +97,30 @@ export function BookingWizard({
   const [confirmed, setConfirmed] = useState<ConfirmedBooking | null>(null);
   const [restored, setRestored] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [loyalty, setLoyalty] = useState<{ phone: string; card: LoyaltyProgress } | null>(null);
+
+  // The stamp card follows the phone being typed (or the one remembered on this device).
+  // Debounced, and a reply for a phone that is no longer in the field is dropped. Any
+  // failure simply shows nothing: a reward that cannot be read never blocks a booking.
+  const loyaltyEnabled = business.loyalty_enabled === true;
+  const typedPhone = clientPhone.trim();
+  useEffect(() => {
+    if (!loyaltyEnabled || !/^0\d{9}$/.test(typedPhone)) return;
+    let stale = false;
+    const timer = setTimeout(async () => {
+      try {
+        const result = await getLoyaltyProgress(typedPhone);
+        if (!stale && result.success) setLoyalty({ phone: typedPhone, card: result.data });
+      } catch {
+        // Nothing to show.
+      }
+    }, 400);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [loyaltyEnabled, typedPhone]);
+  const loyaltyCard = loyaltyEnabled && loyalty?.phone === typedPhone ? loyalty.card : null;
 
   function goTo(next: Step, dir: 1 | -1) {
     setStep([next, dir]);
@@ -269,7 +296,17 @@ export function BookingWizard({
   }
 
   if (confirmed) {
-    return <ConfirmationView booking={confirmed} business={business} restored={restored} onReset={handleReset} />;
+    return (
+      <ConfirmationView
+        booking={confirmed}
+        business={business}
+        restored={restored}
+        // A fresh booking is still pending, so the card read on the details step is still
+        // the right one; a turn restored from storage shows no card (the phone may differ).
+        loyalty={restored ? null : loyaltyCard}
+        onReset={handleReset}
+      />
+    );
   }
 
   const context = [
@@ -372,6 +409,7 @@ export function BookingWizard({
               onChangeName={setClientName}
               onChangePhone={setClientPhone}
               onChangeNotes={setNotes}
+              loyaltyCard={loyaltyCard}
               onContinue={() => goTo("summary", 1)}
             />
           )}
@@ -385,6 +423,7 @@ export function BookingWizard({
               clientName={clientName.trim()}
               clientPhone={clientPhone.trim()}
               notes={notes.trim()}
+              loyaltyCard={loyaltyCard}
               error={submitError}
               isPending={isPending}
               onEdit={(target) => {
@@ -754,6 +793,7 @@ function DetailsStep({
   onChangeName,
   onChangePhone,
   onChangeNotes,
+  loyaltyCard,
   onContinue,
 }: {
   clientName: string;
@@ -762,6 +802,7 @@ function DetailsStep({
   onChangeName: (v: string) => void;
   onChangePhone: (v: string) => void;
   onChangeNotes: (v: string) => void;
+  loyaltyCard: LoyaltyProgress | null;
   onContinue: () => void;
 }) {
   const uid = useId();
@@ -814,6 +855,21 @@ function DetailsStep({
             className={cn(inputClasses, "tabular-nums")}
           />
         </Field>
+        {/* Grows in only after the phone was typed (a response to input, not a layout jump). */}
+        <AnimatePresence initial={false}>
+          {loyaltyCard && phoneIsValid && (
+            <motion.div
+              key="stamps"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={SPRING_SNAPPY}
+              className="overflow-hidden"
+            >
+              <LoyaltyStamps card={loyaltyCard} moment="details" />
+            </motion.div>
+          )}
+        </AnimatePresence>
         <Field
           id={`${uid}-notes`}
           label="Notas (opcional)"
@@ -851,6 +907,7 @@ function SummaryStep({
   clientName,
   clientPhone,
   notes,
+  loyaltyCard,
   error,
   isPending,
   onEdit,
@@ -863,6 +920,7 @@ function SummaryStep({
   clientName: string;
   clientPhone: string;
   notes: string;
+  loyaltyCard: LoyaltyProgress | null;
   error: string | null;
   isPending: boolean;
   onEdit: (step: Step) => void;
@@ -907,6 +965,15 @@ function SummaryStep({
           <span className="text-sm text-muted-foreground">Total · pagas en el local</span>
           <span className="text-2xl font-extrabold text-primary tabular-nums">{formatPrice(service.price)}</span>
         </div>
+        {/* The real price stays above: the free turn is applied by the barber when paying. */}
+        {loyaltyCard?.eligible && (
+          <p className="border-t border-border px-5 py-3 text-sm">
+            <strong className="font-bold text-primary">Corte gratis</strong>{" "}
+            <span className="text-muted-foreground">
+              por tus {paidTurnsPerReward(loyaltyCard.cycle)} visitas · se aplica al pagar en el local.
+            </span>
+          </p>
+        )}
       </div>
 
       {error && (

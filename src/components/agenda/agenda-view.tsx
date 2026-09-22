@@ -422,12 +422,22 @@ export function AgendaView({
       const result = await completeAppointment({ appointmentId: id, ...payment });
       if (result.success) {
         toast.success(payment.redeemReward ? "Corte gratis aplicado" : "Turno completado");
-        setDay((prev) => ({
-          ...prev,
-          appointments: prev.appointments.map((a) =>
-            a.id === id ? { ...a, status: "completed", is_reward: payment.redeemReward === true } : a
-          ),
-        }));
+        setDay((prev) => {
+          const done = prev.appointments.find((a) => a.id === id);
+          const card = done ? prev.loyalty?.[done.client_id] : undefined;
+          return {
+            ...prev,
+            appointments: prev.appointments.map((a) =>
+              a.id === id ? { ...a, status: "completed", is_reward: payment.redeemReward === true } : a
+            ),
+            // The reward is spent: stop offering it on the client's other turns right away,
+            // before the quiet refresh below brings the recomputed card.
+            loyalty:
+              payment.redeemReward && done && card
+                ? { ...prev.loyalty, [done.client_id]: { ...card, progress: 0, eligible: false } }
+                : prev.loyalty,
+          };
+        });
         setCompletingId(null);
         refreshQuietly(date);
         setWeekDays(null);

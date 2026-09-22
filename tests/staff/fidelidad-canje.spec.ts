@@ -75,3 +75,23 @@ test("con el interruptor apagado el cobro de un cliente elegible es el normal", 
   const today = (await stubState()).payments.filter((p) => p.payment_method !== "reward");
   expect(today.at(-1)).toMatchObject({ amount: 7, payment_method: "cash" });
 });
+
+test("tras canjear, el otro turno del mismo cliente ya no ofrece el premio", async ({ page }) => {
+  await seed("loyalty-eligible-two");
+  await page.reload();
+  // The agenda prints "9:00", so match it without also matching "19:00".
+  const nine = /(^|[^0-9])9:00/;
+  const morning = page.locator("div").filter({ hasText: nine }).filter({ hasNotText: "18:00" }).filter({ hasText: "Luis Fiel" });
+  const evening = page.locator("div").filter({ hasText: "18:00" }).filter({ hasNotText: nine }).filter({ hasText: "Luis Fiel" });
+  await expect(morning.getByText("Corte gratis")).toBeVisible();
+
+  await evening.getByRole("button", { name: "Completar" }).click();
+  const dialog = page.getByRole("dialog", { name: "Completar turno" });
+  await dialog.getByRole("switch", { name: "Aplicar corte gratis" }).click();
+  await dialog.getByRole("button", { name: "Confirmar corte gratis" }).click();
+  await expect(page.getByText("Corte gratis aplicado")).toBeVisible();
+
+  await expect(morning.getByText("Corte gratis")).toHaveCount(0);
+  await morning.getByRole("button", { name: "Completar" }).click();
+  await expect(page.getByRole("switch", { name: "Aplicar corte gratis" })).toHaveCount(0);
+});

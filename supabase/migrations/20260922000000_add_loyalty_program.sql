@@ -21,7 +21,8 @@
 --   4. El staff no puede fabricar sellos: un trigger impide que `authenticated` marque un
 --      turno como completado o toque `is_reward` por fuera de las dos funciones de cierre.
 --
--- Todo el archivo es idempotente: volver a aplicarlo no rompe nada.
+-- Todo el archivo es idempotente: volver a aplicarlo no rompe nada (el cambio de checks
+-- de payments se salta si ya está hecho).
 
 -- ---------------------------------------------------------------------------
 -- 1. Configuración por negocio. Nace apagada.
@@ -69,9 +70,21 @@ create index if not exists appointments_client_completed_idx
 
 do $$
 declare
-  v_found integer := 0;
+  v_found integer;
   v_conname text;
 begin
+  -- Idempotencia: el cambio de checks corre una sola vez. En una segunda pasada el check
+  -- nuevo de amount también menciona payment_method y el primer bucle lo borraría.
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.payments'::regclass
+      and conname = 'payments_payment_method_check'
+      and pg_get_constraintdef(oid) ~ 'reward'
+  ) then
+    return;
+  end if;
+
+  v_found := 0;
   for v_conname in
     select conname from pg_constraint
     where conrelid = 'public.payments'::regclass
@@ -87,17 +100,12 @@ begin
       'FIDELIDAD: no se encontró ningún CHECK sobre payments.payment_method. '
       'La tabla no es la que esta migración espera: revisar a mano antes de seguir.';
   end if;
-end $$;
 
-alter table public.payments
-  add constraint payments_payment_method_check
-  check (payment_method in ('cash', 'transfer', 'reward'));
+  alter table public.payments
+    add constraint payments_payment_method_check
+    check (payment_method in ('cash', 'transfer', 'reward'));
 
-do $$
-declare
-  v_found integer := 0;
-  v_conname text;
-begin
+  v_found := 0;
   for v_conname in
     select conname from pg_constraint
     where conrelid = 'public.payments'::regclass
@@ -113,14 +121,16 @@ begin
       'FIDELIDAD: no se encontró ningún CHECK sobre payments.amount. '
       'La tabla no es la que esta migración espera: revisar a mano antes de seguir.';
   end if;
-end $$;
 
-alter table public.payments
-  add constraint payments_amount_check
-  check (
-    (payment_method = 'reward' and amount = 0)
-    or (payment_method <> 'reward' and amount > 0)
-  );
+  -- Más estricto que el `amount > 0` de antes, no más laxo: el $0 queda reservado al
+  -- premio, y un premio no puede colarse con otro importe.
+  alter table public.payments
+    add constraint payments_amount_check
+    check (
+      (payment_method = 'reward' and amount = 0)
+      or (payment_method <> 'reward' and amount > 0)
+    );
+end $$;
 
 -- Si quedara vivo otro check que prohíba el 0, el canje reventaría recién en producción.
 do $$
@@ -221,8 +231,10 @@ revoke all on function public.loyalty_progress(uuid) from public, anon, authenti
 -- ---------------------------------------------------------------------------
 -- 6. Lectura pública, por teléfono.
 --
---    Devuelve solo números. Un teléfono desconocido responde lo mismo que un cliente
---    nuevo y nunca se devuelve ni el nombre ni el client_id.
+--    Devuelve solo números: nunca el nombre ni el client_id. Un teléfono desconocido
+--    responde igual que un cliente sin sellos, pero un teléfono con sellos sí revela que
+--    es cliente y cuántas visitas pagadas lleva. Riesgo aceptado por el dueño (2026-09-22):
+--    son números, sin datos personales.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.public_loyalty_progress(p_business_id uuid, p_phone text)

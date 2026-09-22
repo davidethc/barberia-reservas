@@ -11,6 +11,8 @@ import { formatLongDate } from "@/lib/shop-date";
 import { SPRING_SOFT } from "@/lib/motion";
 import { pillClasses } from "@/components/monky/pill-link";
 import { Monogram } from "@/components/monky/site-header";
+import { LoyaltyStamps } from "@/components/monky/loyalty-stamps";
+import type { LoyaltyProgress } from "@/lib/loyalty";
 import type { Business, ConfirmedBooking } from "./types";
 
 const itemVariants = {
@@ -22,11 +24,13 @@ export function ConfirmationView({
   booking,
   business,
   restored,
+  loyalty,
   onReset,
 }: {
   booking: ConfirmedBooking;
   business: Business;
   restored: boolean;
+  loyalty: LoyaltyProgress | null;
   onReset: () => void;
 }) {
   const whatsappLink = business.phone
@@ -126,6 +130,12 @@ export function ConfirmationView({
             <span className="font-mono text-lg font-bold tracking-[0.2em] tabular-nums">{booking.code}</span>
           </div>
         </motion.div>
+
+        {loyalty && (
+          <motion.div className="mt-4" variants={itemVariants}>
+            <LoyaltyStamps card={loyalty} moment="confirmation" />
+          </motion.div>
+        )}
 
         <motion.div className="mt-6 flex flex-col gap-3" variants={itemVariants}>
           <button type="button" onClick={handleAddToCalendar} className={cn(pillClasses, "w-full")}>
